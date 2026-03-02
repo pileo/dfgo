@@ -1,0 +1,82 @@
+# Architecture Overview
+
+dfgo is a pipeline orchestration engine where pipelines are declared as Graphviz DOT digraphs. Nodes are stages (LLM calls, human approvals, external tools) and edges define conditional transitions between them.
+
+## Core Abstractions
+
+```
+DOT source → Parser → Graph → Validator → Engine → Outcome
+                                             ↑
+                                    Handler Registry
+                                    Edge Selector
+                                    Checkpoint
+                                    Interviewer
+                                    Transforms
+```
+
+### Immutable vs Mutable
+
+The system separates immutable graph data from mutable execution state:
+
+- **Immutable** (`model/`): `Graph`, `Node`, `Edge` — parsed once, never modified during execution
+- **Mutable** (`runtime/`): `Context`, `Outcome`, `Checkpoint` — change as the pipeline runs
+
+### Engine Lifecycle
+
+The engine runs a 5-phase lifecycle for every pipeline:
+
+```
+Parse → Validate → Initialize → Execute → Finalize
+```
+
+1. **Parse**: DOT source → `model.Graph` via hand-rolled lexer/parser
+2. **Validate**: Lint rules check structural correctness (start node exists, edges target real nodes, conditions parse, etc.)
+3. **Initialize**: Generate run ID, create run directory, load checkpoint if resuming, seed pipeline context
+4. **Execute**: Loop through nodes — for each node: look up handler, execute it, apply context updates, select next edge, advance. Handles retries and goal gates.
+5. **Finalize**: Write final checkpoint and manifest
+
+### Key Design Decisions
+
+1. **`map[string]string` attributes everywhere** — nodes, edges, and graph-level attributes are all string maps. Type coercion (`IntAttr`, `BoolAttr`, `FloatAttr`) happens lazily at point of use. This matches DOT's string-native format and keeps the model simple.
+
+2. **`Order` field on Node and Edge** — preserves DOT declaration order for deterministic traversal and reproducible test output.
+
+3. **Custom DOT parser** — hand-rolled lexer + recursive-descent parser (~300 lines) instead of a library. The DOT subset we need is small; owning the parser gives better error messages and avoids a heavy dependency.
+
+4. **Handler registry with two lookup tiers** — `type` attribute takes priority over `shape` attribute. This lets a node declare `type="codergen"` explicitly, or fall back to shape-based dispatch (e.g., `shape="Mdiamond"` → start handler).
+
+5. **Optional handler interfaces** — `FidelityAwareHandler` and `SingleExecutionHandler` are opt-in capability markers. Handlers implement them only if they need fidelity control or single-execution semantics.
+
+6. **Failure classification** — outcomes carry a `FailureClass` (transient, deterministic, canceled, budget-exhausted) so the engine can make informed retry/escalation decisions.
+
+7. **Atomic checkpoint writes** — write to temp file + rename to prevent corruption if the process crashes mid-write.
+
+## Package Dependency Graph
+
+```
+cmd/dfgo
+  └─ attractor (engine, RunPipeline facade)
+       ├─ dot (lexer, parser)
+       ├─ model (Graph, Node, Edge)
+       ├─ runtime (Context, Outcome, Checkpoint)
+       ├─ validate (lint rules)
+       ├─ cond (condition parser/evaluator)
+       ├─ edge (edge selector)
+       ├─ handler (Handler interface, all handlers)
+       │    ├─ interviewer
+       │    └─ fidelity
+       ├─ style (stylesheet)
+       ├─ transform (variable expansion)
+       └─ rundir (run directory, manifest)
+```
+
+All packages under `internal/attractor/` — not importable by external code.
+
+## External Dependencies
+
+| Dependency | Used by | Purpose |
+|---|---|---|
+| `github.com/google/uuid` | engine | Generate unique run IDs |
+| `golang.org/x/sync/errgroup` | (reserved) | Parallel handler goroutine management (not yet wired) |
+
+Everything else is Go stdlib: `log/slog`, `encoding/json`, `os/exec`, `sync`, `context`, `regexp`, `strconv`, `time`.

@@ -1,0 +1,49 @@
+# Stylesheet
+
+**Package**: `internal/attractor/style`
+
+A CSS-like system for configuring per-node LLM parameters (model, reasoning effort, provider) via selectors with specificity-based resolution.
+
+## Syntax
+
+```css
+* {
+    llm_model: gpt-4;
+    reasoning_effort: medium;
+}
+
+.box {
+    llm_model: claude-3;
+}
+
+#critical_step {
+    reasoning_effort: high;
+}
+```
+
+Rules are `selector { property: value; }` blocks. Properties are arbitrary key-value pairs — the stylesheet doesn't validate them.
+
+## Selectors
+
+| Syntax | Matches | Specificity |
+|---|---|---|
+| `*` | All nodes | 0 (lowest) |
+| `.box` or `box` | Nodes with `shape="box"` | 1 |
+| `#myNode` | Node with `ID="myNode"` | 2 (highest) |
+
+A bare identifier (no prefix) is treated as a shape class selector.
+
+## Resolution
+
+`Stylesheet.Resolve(node)` returns the merged property map for a node. Rules are applied in specificity order (lowest first), so higher-specificity rules overwrite lower ones. Within the same specificity, later rules win.
+
+```go
+ss := style.ParseStylesheet(src)
+props := ss.Resolve(node)
+// props["llm_model"] → "claude-3" (from .box, overrides * rule)
+// props["reasoning_effort"] → "high" (from #critical_step, overrides * rule)
+```
+
+## Current Status
+
+The stylesheet parser and resolver are implemented and tested. They are **not yet wired into the engine** — the engine doesn't load or apply stylesheets during execution. This is a planned integration point where resolved properties would be passed to handlers (especially `CodergenHandler`) to configure LLM parameters per-node.
