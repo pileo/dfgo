@@ -1,0 +1,13 @@
+digraph branching {
+    start [shape=Mdiamond]
+    check [shape=diamond, type="conditional"]
+    path_a [shape=box, type="codergen", prompt="Path A"]
+    path_b [shape=box, type="codergen", prompt="Path B"]
+    exit [shape=Msquare]
+
+    start -> check
+    check -> path_a [label="yes", condition="outcome=SUCCESS"]
+    check -> path_b [label="no", condition="outcome=FAIL"]
+    path_a -> exit
+    path_b -> exit
+}

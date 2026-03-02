@@ -1,0 +1,5 @@
+digraph no_start {
+    A [shape=box]
+    exit [shape=Msquare]
+    A -> exit
+}

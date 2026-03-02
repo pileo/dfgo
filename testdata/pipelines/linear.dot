@@ -1,0 +1,8 @@
+digraph linear {
+    start [shape=Mdiamond]
+    A [shape=box, label="Step A", type="codergen", prompt="Do step A"]
+    B [shape=box, label="Step B", type="codergen", prompt="Do step B"]
+    exit [shape=Msquare]
+
+    start -> A -> B -> exit
+}

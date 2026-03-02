@@ -1,0 +1,5 @@
+digraph no_terminal {
+    start [shape=Mdiamond]
+    A [shape=box]
+    start -> A
+}

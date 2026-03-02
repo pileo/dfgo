@@ -1,0 +1,15 @@
+digraph parallel {
+    start [shape=Mdiamond]
+    fan_out [shape=component, type="parallel", join="wait_all"]
+    worker_a [shape=box, type="codergen", prompt="Worker A"]
+    worker_b [shape=box, type="codergen", prompt="Worker B"]
+    fan_in [shape=tripleoctagon, type="parallel.fan_in"]
+    exit [shape=Msquare]
+
+    start -> fan_out
+    fan_out -> worker_a
+    fan_out -> worker_b
+    worker_a -> fan_in
+    worker_b -> fan_in
+    fan_in -> exit
+}

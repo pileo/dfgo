@@ -1,0 +1,5 @@
+digraph simple {
+    start [shape=Mdiamond]
+    exit [shape=Msquare]
+    start -> exit
+}

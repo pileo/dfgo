@@ -1,0 +1,9 @@
+digraph unreachable {
+    start [shape=Mdiamond]
+    A [shape=box]
+    B [shape=box]
+    exit [shape=Msquare]
+
+    start -> A -> exit
+    // B is unreachable
+}

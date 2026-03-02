@@ -1,0 +1,9 @@
+digraph retry {
+    start [shape=Mdiamond]
+    do_work [shape=box, type="codergen", prompt="Do the work", max_retries="3", goal_gate="true", goal="Complete the task successfully"]
+    exit [shape=Msquare]
+
+    start -> do_work
+    do_work -> exit [condition="outcome=SUCCESS"]
+    do_work -> do_work [condition="outcome=RETRY", label="retry"]
+}
