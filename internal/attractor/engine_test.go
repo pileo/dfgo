@@ -1246,6 +1246,76 @@ func TestParallelFanInContextKeys(t *testing.T) {
 	}
 }
 
+func TestParallelExecutesBothChildren(t *testing.T) {
+	// Verify that the parallel handler actually executes both children
+	// and their context updates are available downstream via fan_in.
+	src := `digraph test {
+		start [shape=Mdiamond]
+		fan_out [shape=component, type="parallel", join="wait_all"]
+		worker_a [shape=box, type="mock"]
+		worker_b [shape=box, type="mock"]
+		fan_in [shape=tripleoctagon, type="parallel.fan_in"]
+		capture [shape=box, type="capture"]
+		exit [shape=Msquare]
+		start -> fan_out
+		fan_out -> worker_a
+		fan_out -> worker_b
+		worker_a -> fan_in
+		worker_b -> fan_in
+		fan_in -> capture -> exit
+	}`
+	mockH := newPerNodeHandler(map[string]func(int) runtime.Outcome{
+		"worker_a": func(_ int) runtime.Outcome {
+			return runtime.Outcome{
+				Status:         runtime.StatusSuccess,
+				ContextUpdates: map[string]string{"worker_a.done": "true"},
+			}
+		},
+		"worker_b": func(_ int) runtime.Outcome {
+			return runtime.Outcome{
+				Status:         runtime.StatusSuccess,
+				ContextUpdates: map[string]string{"worker_b.done": "true"},
+			}
+		},
+	})
+	capture := &contextCaptureHandler{}
+	reg := handler.NewRegistry()
+	reg.RegisterShape("Mdiamond", &handler.StartHandler{})
+	reg.RegisterType("mock", mockH)
+	reg.RegisterType("parallel", handler.NewParallelHandler())
+	reg.RegisterType("parallel.fan_in", &handler.FanInHandler{})
+	reg.RegisterType("capture", capture)
+	dir := t.TempDir()
+
+	err := RunPipeline(context.Background(), src, EngineConfig{
+		LogsDir:  dir,
+		Registry: reg,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Both workers must have been called.
+	if got := mockH.callCount("worker_a"); got != 1 {
+		t.Errorf("expected worker_a called 1 time, got %d", got)
+	}
+	if got := mockH.callCount("worker_b"); got != 1 {
+		t.Errorf("expected worker_b called 1 time, got %d", got)
+	}
+
+	// Downstream capture node should see both context updates.
+	if len(capture.snapshots) == 0 {
+		t.Fatal("expected at least one capture snapshot")
+	}
+	snap := capture.snapshots[0]
+	if snap["worker_a.done"] != "true" {
+		t.Errorf("expected worker_a.done=true in context, got %q", snap["worker_a.done"])
+	}
+	if snap["worker_b.done"] != "true" {
+		t.Errorf("expected worker_b.done=true in context, got %q", snap["worker_b.done"])
+	}
+}
+
 func TestRetryDotFullChain(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join("..", "..", "testdata", "pipelines", "retry.dot"))
 	if err != nil {

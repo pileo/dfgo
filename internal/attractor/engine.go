@@ -424,6 +424,16 @@ func (e *Engine) execute(ctx context.Context, g *model.Graph) error {
 
 		e.completed[currentID] = true
 
+		// Parallel fan-out: children already executed by handler, skip to convergence.
+		if node.Attrs["type"] == "parallel" {
+			if nextID, ok := e.handleParallelComplete(g, currentID); ok {
+				slog.Info("parallel complete, jumping to convergence", "from", currentID, "to", nextID)
+				e.saveCheckpoint(nextID)
+				currentID = nextID
+				continue
+			}
+		}
+
 		// Select next edge
 		nextEdge := edge.Select(g, currentID, outcome, e.PCtx)
 		if nextEdge == nil {
@@ -455,6 +465,17 @@ func (e *Engine) executeNode(ctx context.Context, g *model.Graph, node *model.No
 	h, err := e.Registry.Lookup(node)
 	if err != nil {
 		return runtime.Outcome{}, err
+	}
+
+	// Wire ChildExecutor for parallel handlers so they execute children through the engine.
+	if ph, ok := h.(*handler.ParallelHandler); ok {
+		ph.ChildExecutor = func(childCtx context.Context, childNodeID string) (runtime.Outcome, error) {
+			childNode := g.NodeByID(childNodeID)
+			if childNode == nil {
+				return runtime.Outcome{}, fmt.Errorf("parallel child %q not found", childNodeID)
+			}
+			return e.executeNode(childCtx, g, childNode)
+		}
 	}
 
 	// Resolve fidelity and generate preamble
@@ -545,6 +566,75 @@ func (e *Engine) saveCheckpoint(currentNode string) {
 			"current_node": currentNode,
 		})
 	}
+}
+
+// handleParallelComplete processes results from a completed parallel fan-out.
+// It marks children as completed, applies their context updates, and returns
+// the convergence node ID (typically a fan_in).
+func (e *Engine) handleParallelComplete(g *model.Graph, fanOutID string) (string, bool) {
+	resultsJSON, ok := e.PCtx.Get("parallel.results")
+	if !ok {
+		return "", false
+	}
+
+	var childOutcomes map[string]runtime.Outcome
+	if err := json.Unmarshal([]byte(resultsJSON), &childOutcomes); err != nil {
+		return "", false
+	}
+
+	// Apply context updates and mark children completed.
+	for childID, childOutcome := range childOutcomes {
+		if childOutcome.ContextUpdates != nil {
+			e.PCtx.Merge(childOutcome.ContextUpdates)
+		}
+		e.completed[childID] = true
+		if childNode := g.NodeByID(childID); childNode != nil {
+			e.writeNodeStatus(childNode, childOutcome)
+		}
+		e.visitLog = append(e.visitLog, runtime.VisitEntry{
+			NodeID: childID, Status: childOutcome.Status, Attempt: 1,
+		})
+		e.Events.Emit(events.StageCompleted, map[string]any{
+			"node_id": childID,
+			"status":  string(childOutcome.Status),
+		})
+	}
+
+	// Find convergence: common successor of all children.
+	children := g.Successors(fanOutID)
+	return findConvergence(g, children)
+}
+
+// findConvergence returns the first node (by declaration order) that is a
+// direct successor of every child. This is typically the fan_in node.
+func findConvergence(g *model.Graph, children []string) (string, bool) {
+	if len(children) == 0 {
+		return "", false
+	}
+
+	// Build successor sets for each child.
+	sets := make([]map[string]bool, len(children))
+	for i, childID := range children {
+		sets[i] = make(map[string]bool)
+		for _, s := range g.Successors(childID) {
+			sets[i][s] = true
+		}
+	}
+
+	// Find first node (by declaration order) present in all successor sets.
+	for _, n := range g.Nodes {
+		inAll := true
+		for _, set := range sets {
+			if !set[n.ID] {
+				inAll = false
+				break
+			}
+		}
+		if inAll {
+			return n.ID, true
+		}
+	}
+	return "", false
 }
 
 func (e *Engine) finalize() error {
