@@ -56,6 +56,19 @@ q.Remaining()                // how many unused answers remain
 
 Panics (returns error) if the queue is exhausted.
 
+### Callback
+
+Delegates to a user-supplied function. Designed for programmatic use when embedding dfgo as a library.
+
+```go
+cb := interviewer.NewCallback(func(q interviewer.Question) (interviewer.Answer, error) {
+    return interviewer.Answer{Text: "approved", Selected: -1}, nil
+})
+ans, err := cb.Ask(question)  // calls the function
+```
+
+Composes naturally with `Recording` and other decorators.
+
 ### Recording
 
 Wraps any other interviewer and records all question/answer pairs.

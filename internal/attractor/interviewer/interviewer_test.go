@@ -1,6 +1,7 @@
 package interviewer
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -107,6 +108,66 @@ func TestConsoleMultipleChoice(t *testing.T) {
 	}
 	if ans.Selected != 1 || ans.Text != "B" {
 		t.Fatalf("expected B at index 1, got %q at %d", ans.Text, ans.Selected)
+	}
+}
+
+func TestCallbackBasic(t *testing.T) {
+	cb := NewCallback(func(q Question) (Answer, error) {
+		return Answer{Text: "yes", Selected: -1}, nil
+	})
+	ans, err := cb.Ask(Question{Type: YesNo, Prompt: "Continue?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ans.Text != "yes" || ans.Selected != -1 {
+		t.Fatalf("expected yes/-1, got %q/%d", ans.Text, ans.Selected)
+	}
+}
+
+func TestCallbackError(t *testing.T) {
+	cb := NewCallback(func(q Question) (Answer, error) {
+		return Answer{}, fmt.Errorf("user cancelled")
+	})
+	_, err := cb.Ask(Question{Type: Freeform, Prompt: "Name?"})
+	if err == nil || err.Error() != "user cancelled" {
+		t.Fatalf("expected user cancelled error, got %v", err)
+	}
+}
+
+func TestCallbackMultipleChoice(t *testing.T) {
+	cb := NewCallback(func(q Question) (Answer, error) {
+		return Answer{Text: q.Options[1], Selected: 1}, nil
+	})
+	ans, err := cb.Ask(Question{
+		Type:    MultipleChoice,
+		Prompt:  "Pick:",
+		Options: []string{"Alpha", "Beta"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ans.Text != "Beta" || ans.Selected != 1 {
+		t.Fatalf("expected Beta/1, got %q/%d", ans.Text, ans.Selected)
+	}
+}
+
+func TestCallbackWithRecording(t *testing.T) {
+	cb := NewCallback(func(q Question) (Answer, error) {
+		return Answer{Text: "confirmed", Selected: -1}, nil
+	})
+	rec := NewRecording(cb)
+	ans, err := rec.Ask(Question{Type: Confirmation, Prompt: "Sure?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ans.Text != "confirmed" {
+		t.Fatalf("expected confirmed, got %q", ans.Text)
+	}
+	if len(rec.Interactions) != 1 {
+		t.Fatalf("expected 1 interaction, got %d", len(rec.Interactions))
+	}
+	if rec.Interactions[0].Question.Prompt != "Sure?" {
+		t.Fatal("expected recorded question")
 	}
 }
 
