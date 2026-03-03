@@ -1,9 +1,26 @@
 digraph retry {
+    goal="Complete the full retry workflow"
+    default_max_retry="2"
+    fallback_retry_target="setup"
+
     start [shape=Mdiamond]
-    do_work [shape=box, type="codergen", prompt="Do the work", max_retries="3", goal_gate="true", goal="Complete the task successfully"]
+    setup [shape=box, type="codergen", prompt="Prepare environment"]
+    primary_work [shape=box, type="codergen", prompt="Primary work",
+                  max_retries="3", retry_policy="aggressive",
+                  goal_gate="true", retry_target="setup"]
+    secondary_work [shape=box, type="codergen", prompt="Secondary work",
+                    retry_policy="linear", allow_partial="true"]
+    validate [shape=box, type="codergen", prompt="Validate results",
+              retry_policy="none", goal_gate="true"]
     exit [shape=Msquare]
 
-    start -> do_work
-    do_work -> exit [condition="outcome=SUCCESS"]
-    do_work -> do_work [condition="outcome=RETRY", label="retry"]
+    start -> setup
+    setup -> primary_work
+    primary_work -> secondary_work [condition="outcome=SUCCESS"]
+    primary_work -> primary_work [condition="outcome=RETRY", label="retry"]
+    secondary_work -> validate [condition="outcome=SUCCESS"]
+    secondary_work -> validate [condition="outcome=PARTIAL_SUCCESS", label="partial_ok"]
+    secondary_work -> secondary_work [condition="outcome=RETRY", label="retry"]
+    validate -> exit [condition="outcome=SUCCESS"]
+    validate -> validate [condition="outcome=RETRY", label="retry"]
 }

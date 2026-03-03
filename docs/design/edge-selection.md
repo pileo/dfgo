@@ -62,3 +62,11 @@ nextEdge := edge.Select(graph, currentNodeID, outcome, pipelineContext)
 ```
 
 Returns `nil` only when the node has zero outgoing edges (terminal nodes).
+
+## Integration Test Coverage
+
+The engine integration tests in `engine_test.go` verify that the edge selector is correctly wired into the engine loop:
+
+- `TestEdgeSelectionPreferredLabel` — handler returns `PreferredLabel="b"`, verifies step 2 routes to the correct labeled edge
+- `TestEdgeSelectionSuggestedNextIDs` — handler returns `SuggestedNextIDs=["target_b"]`, verifies step 3 routes to the suggested target
+- `TestFullFeaturesPipeline/full_run` — reviewer returns `PreferredLabel="needs_fix"` then `"approved"`, verifying label-driven review loop routing

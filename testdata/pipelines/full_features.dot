@@ -1,0 +1,35 @@
+digraph full_features {
+    goal="Exercise all major pipeline features"
+    fidelity="compact"
+    model_stylesheet="* { llm_model: gpt-4; temperature: 0.7; }\n.box { max_tokens: 4096; }\n#reviewer { fidelity: truncate; temperature: 0.2; }"
+
+    start [shape=Mdiamond]
+    planner [shape=box, type="codergen", prompt="Plan the approach",
+             fidelity="summary:high"]
+    fan_out [shape=component, type="parallel", join="wait_all",
+             error_policy="fail_fast", max_parallel="2"]
+    worker_alpha [shape=box, type="codergen", prompt="Worker Alpha"]
+    worker_beta [shape=box, type="codergen", prompt="Worker Beta"]
+    worker_gamma [shape=box, type="codergen", prompt="Worker Gamma",
+                  llm_model="claude-3"]
+    fan_in [shape=tripleoctagon, type="parallel.fan_in"]
+    reviewer [shape=box, type="codergen", prompt="Review"]
+    fix_issues [shape=box, type="codergen", prompt="Fix issues"]
+    finalize [shape=box, type="codergen", prompt="Finalize"]
+    exit [shape=Msquare]
+
+    start -> planner
+    planner -> fan_out
+    fan_out -> worker_alpha
+    fan_out -> worker_beta
+    fan_out -> worker_gamma
+    worker_alpha -> fan_in
+    worker_beta -> fan_in
+    worker_gamma -> fan_in
+    fan_in -> reviewer
+    reviewer -> fix_issues [label="needs_fix"]
+    reviewer -> finalize [label="approved"]
+    reviewer -> exit [condition="outcome=FAIL"]
+    fix_issues -> reviewer
+    finalize -> exit
+}

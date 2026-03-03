@@ -96,3 +96,13 @@ All packages under `internal/` — not importable by external code.
 | `golang.org/x/sync/errgroup` | (reserved) | Available for future use (parallel handler uses `sync.WaitGroup` + channel semaphore) |
 
 Everything else is Go stdlib: `log/slog`, `encoding/json`, `os/exec`, `sync`, `context`, `regexp`, `strconv`, `time`.
+
+## Testing
+
+Tests use `go test ./...` across all packages. Key layers:
+
+- **Unit tests**: each package has its own `*_test.go` files testing handlers, validators, edge selection, fidelity, parsing, etc.
+- **Integration tests**: `internal/attractor/engine_test.go` tests feature composition through the full engine lifecycle using DOT fixtures from `testdata/pipelines/` and inline DOT graphs with custom handler stubs.
+- **DOT fixtures**: `testdata/pipelines/` contains 8 valid and 3 invalid pipelines ranging from minimal (`simple.dot`) to comprehensive (`retry.dot` exercises retry/goal-gate/allow_partial composition; `full_features.dot` exercises stylesheet + fidelity + parallel + fan-in + review loops).
+
+See [engine.md](engine.md#test-pipelines) for the full fixture catalog and integration test matrix.

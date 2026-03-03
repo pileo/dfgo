@@ -104,3 +104,15 @@ Implement `LintRule` and add to the runner:
 runner := validate.NewRunner()
 runner.Rules = append(runner.Rules, &MyCustomRule{})
 ```
+
+## Test Fixtures
+
+Invalid DOT fixtures in `testdata/pipelines/invalid/` exercise validation rules:
+
+| Fixture | Rule triggered |
+|---------|---------------|
+| `no_start.dot` | `start_node` — missing start node |
+| `no_terminal.dot` | `terminal_node` — missing exit node |
+| `unreachable.dot` | `reachability` — orphaned nodes |
+
+The `retry.dot` fixture triggers `goal_gate_has_retry` (warning) because the `validate` node has `goal_gate="true"` without an explicit `max_retries`. The `full_features.dot` fixture exercises `stylesheet_syntax` and `fidelity_valid` rules through its `model_stylesheet` and `fidelity` attributes.

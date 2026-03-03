@@ -446,4 +446,4 @@ go test ./...
 - **Phase 6:** ~~Streaming tests~~ DONE (33 tests). ~~FromEnv, cache injection~~ DONE (7 new tests). Run `go test ./internal/llm/...`
 
 ### Integration test:
-Update `testdata/pipelines/retry.dot` to exercise the backoff + goal gate + retry_target chain. Add a new `testdata/pipelines/full_features.dot` that exercises stylesheet, fidelity, parallel with error_policy, and fan-in ranking.
+~~Update `testdata/pipelines/retry.dot` to exercise the backoff + goal gate + retry_target chain. Add a new `testdata/pipelines/full_features.dot` that exercises stylesheet, fidelity, parallel with error_policy, and fan-in ranking.~~ DONE (8 new integration tests + 3 helper handlers in engine_test.go, 2 updated/new DOT fixtures, all passing). Run `go test ./internal/attractor/ -run 'TestDefaultMaxRetry|TestEdgeSelection|TestFidelityModeTruncate|TestEventSequencing|TestParallelFanIn|TestRetryDotFull|TestFullFeatures'`

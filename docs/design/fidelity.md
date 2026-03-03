@@ -70,3 +70,9 @@ Summary modes approximate token budgets at ~4 characters per token and truncate 
 ## Integration
 
 The engine checks if a handler implements `FidelityAwareHandler`. If so, it calls `SetFidelity(mode)` before `Execute()`. The engine also generates a fidelity-appropriate preamble and sets it as the `internal.preamble` context key before handler execution.
+
+## Integration Test Coverage
+
+- `TestFidelityModeTruncateInEngine` — verifies that `fidelity="truncate"` on the graph produces a preamble containing `"Goal:"` but not `"Completed stages:"`
+- `TestPreambleSetInContext` — verifies that the engine sets `internal.preamble` in context before handler execution (default compact mode)
+- `TestFullFeaturesPipeline/stylesheet_attrs` — verifies that the `#reviewer { fidelity: truncate; }` stylesheet rule correctly sets `fidelity="truncate"` on the reviewer node via `full_features.dot`

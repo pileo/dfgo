@@ -5,15 +5,18 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"dfgo/internal/attractor/dot"
 	"dfgo/internal/attractor/events"
 	"dfgo/internal/attractor/handler"
 	"dfgo/internal/attractor/model"
 	"dfgo/internal/attractor/runtime"
+	"dfgo/internal/attractor/style"
 )
 
 func TestRunSimplePipeline(t *testing.T) {
@@ -892,4 +895,497 @@ func TestResolveRetryTarget(t *testing.T) {
 	if !ok || target != "graph_target" {
 		t.Errorf("expected graph_target (fallthrough), got %q (ok=%v)", target, ok)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Helper handlers for integration tests
+// ---------------------------------------------------------------------------
+
+// perNodeHandler dispatches to per-node-ID functions and counts calls.
+type perNodeHandler struct {
+	mu    sync.Mutex
+	funcs map[string]func(int) runtime.Outcome
+	calls map[string]int
+}
+
+func newPerNodeHandler(funcs map[string]func(int) runtime.Outcome) *perNodeHandler {
+	return &perNodeHandler{funcs: funcs, calls: make(map[string]int)}
+}
+
+func (h *perNodeHandler) Execute(_ context.Context, node *model.Node, _ *runtime.Context, _ *model.Graph, _ string) (runtime.Outcome, error) {
+	h.mu.Lock()
+	h.calls[node.ID]++
+	n := h.calls[node.ID]
+	h.mu.Unlock()
+
+	if f, ok := h.funcs[node.ID]; ok {
+		return f(n), nil
+	}
+	return runtime.SuccessOutcome(), nil
+}
+
+func (h *perNodeHandler) callCount(nodeID string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.calls[nodeID]
+}
+
+// suggestedNextHandler returns a success outcome with fixed SuggestedNextIDs.
+type suggestedNextHandler struct {
+	ids []string
+}
+
+func (h *suggestedNextHandler) Execute(_ context.Context, _ *model.Node, _ *runtime.Context, _ *model.Graph, _ string) (runtime.Outcome, error) {
+	return runtime.Outcome{
+		Status:           runtime.StatusSuccess,
+		SuggestedNextIDs: h.ids,
+	}, nil
+}
+
+// preferredLabelHandler returns a success outcome with a fixed PreferredLabel.
+type preferredLabelHandler struct {
+	label string
+}
+
+func (h *preferredLabelHandler) Execute(_ context.Context, _ *model.Node, _ *runtime.Context, _ *model.Graph, _ string) (runtime.Outcome, error) {
+	return runtime.SuccessOutcomeWithLabel(h.label), nil
+}
+
+// ---------------------------------------------------------------------------
+// Integration tests
+// ---------------------------------------------------------------------------
+
+func TestDefaultMaxRetryGraphAttr(t *testing.T) {
+	// Graph sets default_max_retry=2. Node has no max_retries.
+	// alwaysRetryHandler should get 1 initial + 2 retries = 3 total calls.
+	src := `digraph test {
+		default_max_retry="2"
+		start [shape=Mdiamond]
+		work [shape=box, type="test_retry", retry_policy="none"]
+		exit [shape=Msquare]
+		start -> work -> exit
+	}`
+	h := &countingRetryHandler{failFor: 100} // always retry
+	reg := makeRegistryWithHandler("test_retry", h)
+	dir := t.TempDir()
+
+	err := RunPipeline(context.Background(), src, EngineConfig{
+		LogsDir:  dir,
+		Registry: reg,
+	})
+	// Retries exhausted → FAIL → unconditional edge to exit
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 1 initial + 2 retries = 3 calls
+	if got := h.count.Load(); got != 3 {
+		t.Errorf("expected 3 calls (1 initial + 2 retries), got %d", got)
+	}
+}
+
+func TestEdgeSelectionSuggestedNextIDs(t *testing.T) {
+	// Handler returns SuggestedNextIDs=["target_b"].
+	// Edge selector Step 3 should route to target_b, skipping target_a.
+	src := `digraph test {
+		start [shape=Mdiamond]
+		router [shape=box, type="suggest"]
+		target_a [shape=box, type="capture"]
+		target_b [shape=box, type="capture"]
+		exit [shape=Msquare]
+		start -> router
+		router -> target_a
+		router -> target_b
+		target_a -> exit
+		target_b -> exit
+	}`
+	capture := &contextCaptureHandler{}
+	reg := handler.NewRegistry()
+	reg.RegisterShape("Mdiamond", &handler.StartHandler{})
+	reg.RegisterType("suggest", &suggestedNextHandler{ids: []string{"target_b"}})
+	reg.RegisterType("capture", capture)
+	dir := t.TempDir()
+
+	err := RunPipeline(context.Background(), src, EngineConfig{
+		LogsDir:  dir,
+		Registry: reg,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// capture should have exactly 1 snapshot (target_b visited, not target_a)
+	if len(capture.snapshots) != 1 {
+		t.Fatalf("expected exactly 1 capture, got %d", len(capture.snapshots))
+	}
+	if capture.snapshots[0]["current_node"] != "target_b" {
+		t.Errorf("expected target_b visited, got %q", capture.snapshots[0]["current_node"])
+	}
+}
+
+func TestEdgeSelectionPreferredLabel(t *testing.T) {
+	// Handler returns PreferredLabel="b".
+	// Edge selector Step 2 should route to target_b via labeled edge.
+	src := `digraph test {
+		start [shape=Mdiamond]
+		router [shape=box, type="label_pick"]
+		target_a [shape=box, type="capture"]
+		target_b [shape=box, type="capture"]
+		exit [shape=Msquare]
+		start -> router
+		router -> target_a [label="a"]
+		router -> target_b [label="b"]
+		target_a -> exit
+		target_b -> exit
+	}`
+	capture := &contextCaptureHandler{}
+	reg := handler.NewRegistry()
+	reg.RegisterShape("Mdiamond", &handler.StartHandler{})
+	reg.RegisterType("label_pick", &preferredLabelHandler{label: "b"})
+	reg.RegisterType("capture", capture)
+	dir := t.TempDir()
+
+	err := RunPipeline(context.Background(), src, EngineConfig{
+		LogsDir:  dir,
+		Registry: reg,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(capture.snapshots) != 1 {
+		t.Fatalf("expected exactly 1 capture, got %d", len(capture.snapshots))
+	}
+	if capture.snapshots[0]["current_node"] != "target_b" {
+		t.Errorf("expected target_b visited, got %q", capture.snapshots[0]["current_node"])
+	}
+}
+
+func TestFidelityModeTruncateInEngine(t *testing.T) {
+	// Graph sets fidelity=truncate. Preamble should contain "Goal:" but not "Completed stages:".
+	src := `digraph test {
+		goal="test fidelity"
+		fidelity="truncate"
+		start [shape=Mdiamond]
+		work [shape=box, type="capture"]
+		exit [shape=Msquare]
+		start -> work -> exit
+	}`
+	h := &contextCaptureHandler{}
+	reg := handler.NewRegistry()
+	reg.RegisterType("capture", h)
+	reg.RegisterShape("Mdiamond", &handler.StartHandler{})
+	dir := t.TempDir()
+
+	err := RunPipeline(context.Background(), src, EngineConfig{
+		LogsDir:  dir,
+		Registry: reg,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.snapshots) == 0 {
+		t.Fatal("expected at least one snapshot")
+	}
+	preamble := h.snapshots[0]["internal.preamble"]
+	if !strings.Contains(preamble, "Goal:") {
+		t.Error("truncate preamble should contain 'Goal:'")
+	}
+	if strings.Contains(preamble, "Completed stages:") {
+		t.Error("truncate preamble should NOT contain 'Completed stages:'")
+	}
+}
+
+func TestEventSequencing(t *testing.T) {
+	// 2-node pipeline (start → work → exit).
+	// Events must arrive: PipelineStarted before PipelineCompleted,
+	// StageStarted before StageCompleted for each node.
+	src := `digraph test {
+		start [shape=Mdiamond]
+		work [shape=box, type="capture"]
+		exit [shape=Msquare]
+		start -> work -> exit
+	}`
+	h := &contextCaptureHandler{}
+	reg := handler.NewRegistry()
+	reg.RegisterType("capture", h)
+	reg.RegisterShape("Mdiamond", &handler.StartHandler{})
+	dir := t.TempDir()
+
+	engine := NewEngine(EngineConfig{
+		LogsDir:  dir,
+		Registry: reg,
+	})
+
+	g, err := engine.parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine.Graph = g
+	if err := engine.applyStylesheet(g); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.validate(g); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.initialize(g); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var received []events.Event
+	engine.Events.On(func(evt events.Event) {
+		mu.Lock()
+		received = append(received, evt)
+		mu.Unlock()
+	})
+
+	if err := engine.execute(context.Background(), g); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.finalize(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for events to drain.
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Find indices of key events.
+	indexOf := func(typ events.Type) int {
+		for i, e := range received {
+			if e.Type == typ {
+				return i
+			}
+		}
+		return -1
+	}
+
+	pipeStartIdx := indexOf(events.PipelineStarted)
+	pipeCompleteIdx := indexOf(events.PipelineCompleted)
+	stageStartIdx := indexOf(events.StageStarted)
+	stageCompleteIdx := indexOf(events.StageCompleted)
+
+	if pipeStartIdx < 0 {
+		t.Fatal("missing PipelineStarted event")
+	}
+	if pipeCompleteIdx < 0 {
+		t.Fatal("missing PipelineCompleted event")
+	}
+	if stageStartIdx < 0 {
+		t.Fatal("missing StageStarted event")
+	}
+	if stageCompleteIdx < 0 {
+		t.Fatal("missing StageCompleted event")
+	}
+	if pipeStartIdx >= pipeCompleteIdx {
+		t.Errorf("PipelineStarted (%d) should come before PipelineCompleted (%d)", pipeStartIdx, pipeCompleteIdx)
+	}
+	if stageStartIdx >= stageCompleteIdx {
+		t.Errorf("StageStarted (%d) should come before StageCompleted (%d)", stageStartIdx, stageCompleteIdx)
+	}
+	if pipeStartIdx >= stageStartIdx {
+		t.Errorf("PipelineStarted (%d) should come before first StageStarted (%d)", pipeStartIdx, stageStartIdx)
+	}
+	if stageCompleteIdx >= pipeCompleteIdx {
+		// Last stage complete should precede pipeline complete
+		// Find the LAST StageCompleted
+		lastStageComplete := -1
+		for i, e := range received {
+			if e.Type == events.StageCompleted {
+				lastStageComplete = i
+			}
+		}
+		if lastStageComplete >= pipeCompleteIdx {
+			t.Errorf("last StageCompleted (%d) should come before PipelineCompleted (%d)", lastStageComplete, pipeCompleteIdx)
+		}
+	}
+}
+
+func TestParallelFanInContextKeys(t *testing.T) {
+	// Pre-seed parallel.results in context, then run through a fan_in node
+	// and capture context downstream to verify best_id/best_outcome are set.
+	results := map[string]runtime.Outcome{
+		"worker_a": {Status: runtime.StatusFail, FailureReason: "oops"},
+		"worker_b": {Status: runtime.StatusSuccess},
+	}
+	resultsJSON, _ := json.Marshal(results)
+
+	src := `digraph test {
+		start [shape=Mdiamond]
+		fan_in [shape=box, type="parallel.fan_in"]
+		capture [shape=box, type="capture"]
+		exit [shape=Msquare]
+		start -> fan_in -> capture -> exit
+	}`
+	capture := &contextCaptureHandler{}
+	reg := handler.NewRegistry()
+	reg.RegisterShape("Mdiamond", &handler.StartHandler{})
+	reg.RegisterType("parallel.fan_in", &handler.FanInHandler{})
+	reg.RegisterType("capture", capture)
+	dir := t.TempDir()
+
+	err := RunPipeline(context.Background(), src, EngineConfig{
+		LogsDir:  dir,
+		Registry: reg,
+		InitialContext: map[string]string{
+			"parallel.results": string(resultsJSON),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(capture.snapshots) == 0 {
+		t.Fatal("expected at least one snapshot")
+	}
+	snap := capture.snapshots[0]
+	if snap["parallel.fan_in.best_id"] != "worker_b" {
+		t.Errorf("expected best_id=worker_b, got %q", snap["parallel.fan_in.best_id"])
+	}
+	if snap["parallel.fan_in.best_outcome"] == "" {
+		t.Error("expected parallel.fan_in.best_outcome to be set")
+	}
+}
+
+func TestRetryDotFullChain(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "testdata", "pipelines", "retry.dot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// perNodeHandler behavior:
+	//   setup: always succeed
+	//   primary_work: FAIL once (goal gate retry → retry_target="setup"), then succeed
+	//   secondary_work: always RETRY (allow_partial kicks in → PARTIAL_SUCCESS)
+	//   validate: always succeed
+	h := newPerNodeHandler(map[string]func(int) runtime.Outcome{
+		"setup": func(call int) runtime.Outcome {
+			return runtime.SuccessOutcome()
+		},
+		"primary_work": func(call int) runtime.Outcome {
+			if call == 1 {
+				return runtime.FailOutcome("first attempt fails", runtime.FailureTransient)
+			}
+			return runtime.SuccessOutcome()
+		},
+		"secondary_work": func(call int) runtime.Outcome {
+			return runtime.RetryOutcome("always retry")
+		},
+		"validate": func(call int) runtime.Outcome {
+			return runtime.SuccessOutcome()
+		},
+	})
+
+	reg := handler.NewRegistry()
+	reg.RegisterShape("Mdiamond", &handler.StartHandler{})
+	reg.RegisterType("codergen", h)
+	dir := t.TempDir()
+
+	err = RunPipeline(context.Background(), string(src), EngineConfig{
+		LogsDir:  dir,
+		Registry: reg,
+	})
+	if err != nil {
+		t.Fatalf("expected pipeline to complete, got: %v", err)
+	}
+
+	// setup is called exactly once (goal gate retries primary_work in place, not via retry_target)
+	if got := h.callCount("setup"); got != 1 {
+		t.Errorf("expected setup called 1 time, got %d", got)
+	}
+
+	// primary_work: fail once → goal_gate retry in place → succeed = 2 calls
+	if got := h.callCount("primary_work"); got != 2 {
+		t.Errorf("expected primary_work called 2 times (fail + succeed), got %d", got)
+	}
+
+	// secondary_work: always retries → exhausts default_max_retry(2) → allow_partial → PARTIAL_SUCCESS
+	// 1 initial + 2 retries = 3 calls
+	if got := h.callCount("secondary_work"); got != 3 {
+		t.Errorf("expected secondary_work called 3 times (1 + 2 retries), got %d", got)
+	}
+
+	// validate: succeeds immediately
+	if got := h.callCount("validate"); got != 1 {
+		t.Errorf("expected validate called 1 time, got %d", got)
+	}
+}
+
+func TestFullFeaturesPipeline(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "testdata", "pipelines", "full_features.dot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Phase A: Parse-only assertions (stylesheet application).
+	t.Run("stylesheet_attrs", func(t *testing.T) {
+		g, err := dot.Parse(string(src))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ssrc := g.Attrs["model_stylesheet"]
+		if ssrc == "" {
+			t.Fatal("expected model_stylesheet attr")
+		}
+		ss, err := style.ParseStylesheet(ssrc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ss.Apply(g)
+
+		// worker_alpha should get llm_model=gpt-4 from * rule
+		wa := g.NodeByID("worker_alpha")
+		if wa.Attrs["llm_model"] != "gpt-4" {
+			t.Errorf("worker_alpha.llm_model: expected gpt-4, got %q", wa.Attrs["llm_model"])
+		}
+
+		// worker_gamma has explicit llm_model=claude-3, should not be overridden
+		wg := g.NodeByID("worker_gamma")
+		if wg.Attrs["llm_model"] != "claude-3" {
+			t.Errorf("worker_gamma.llm_model: expected claude-3 (explicit), got %q", wg.Attrs["llm_model"])
+		}
+
+		// reviewer should get temperature=0.2 and fidelity=truncate from #reviewer rule
+		rv := g.NodeByID("reviewer")
+		if rv.Attrs["temperature"] != "0.2" {
+			t.Errorf("reviewer.temperature: expected 0.2, got %q", rv.Attrs["temperature"])
+		}
+		if rv.Attrs["fidelity"] != "truncate" {
+			t.Errorf("reviewer.fidelity: expected truncate, got %q", rv.Attrs["fidelity"])
+		}
+	})
+
+	// Phase B: Full run with mock handlers.
+	// Reviewer returns "needs_fix" on call 1, "approved" on call 2.
+	t.Run("full_run", func(t *testing.T) {
+		reviewerCalls := 0
+		h := newPerNodeHandler(map[string]func(int) runtime.Outcome{
+			"reviewer": func(call int) runtime.Outcome {
+				reviewerCalls++
+				if call == 1 {
+					return runtime.SuccessOutcomeWithLabel("needs_fix")
+				}
+				return runtime.SuccessOutcomeWithLabel("approved")
+			},
+		})
+
+		reg := handler.NewRegistry()
+		reg.RegisterShape("Mdiamond", &handler.StartHandler{})
+		reg.RegisterType("codergen", h)
+		// parallel and fan_in will be looked up by type; register stubs
+		reg.RegisterType("parallel", &handler.StartHandler{})
+		reg.RegisterType("parallel.fan_in", &handler.StartHandler{})
+		dir := t.TempDir()
+
+		err := RunPipeline(context.Background(), string(src), EngineConfig{
+			LogsDir:  dir,
+			Registry: reg,
+		})
+		if err != nil {
+			t.Fatalf("expected pipeline to complete, got: %v", err)
+		}
+
+		if reviewerCalls != 2 {
+			t.Errorf("expected reviewer called 2 times, got %d", reviewerCalls)
+		}
+	})
 }

@@ -165,6 +165,8 @@ The `opts` map includes the node ID, graph goal, and all non-reserved node attri
 
 If no `parallel.results` key exists in context (e.g., node used as a plain synchronization point), passes through with SUCCESS.
 
+`TestParallelFanInContextKeys` in `engine_test.go` verifies the full pipeline: pre-seeded `parallel.results` → fan-in ranking → downstream node reads `parallel.fan_in.best_id` and `parallel.fan_in.best_outcome` from context.
+
 ### ToolHandler
 
 - **Type**: `tool`

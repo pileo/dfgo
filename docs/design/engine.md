@@ -169,3 +169,48 @@ attractor.RunPipeline(ctx, dotSource, attractor.EngineConfig{
 ```
 
 The engine loads the checkpoint, restores context and retry counters, and resumes from `CurrentNode`. Already-completed nodes are skipped.
+
+## Test Pipelines
+
+DOT fixtures in `testdata/pipelines/` provide integration test coverage for engine features. Each fixture exercises a specific subset of the engine.
+
+### Basic Fixtures
+
+| Fixture | Topology | Features exercised |
+|---------|----------|-------------------|
+| `simple.dot` | start → exit | Minimal valid pipeline, parse + validate + execute lifecycle |
+| `linear.dot` | start → A → B → exit | Edge chaining, codergen handler, checkpoint writes |
+| `branching.dot` | start → diamond → {path_a, path_b} → exit | Conditional edge routing, condition expressions |
+| `parallel.dot` | start → fan_out → {a, b} → fan_in → exit | Parallel handler, fan-in handler, `wait_all` join |
+
+### Advanced Fixtures
+
+| Fixture | Key features |
+|---------|-------------|
+| `retry.dot` | `default_max_retry` (graph attr inheritance), `fallback_retry_target`, multiple `retry_policy` presets (`aggressive`, `linear`, `none`), `allow_partial` (PARTIAL_SUCCESS on exhaustion), two `goal_gate` nodes, conditional + labeled edge routing |
+| `full_features.dot` | `model_stylesheet` (wildcard, shape/class, ID selectors), `fidelity` (graph-level compact, node-level summary:high, ID-level truncate), parallel with `error_policy="fail_fast"` + `max_parallel="2"`, fan-in, PreferredLabel edge selection (review → fix_issues loop), explicit attr override vs stylesheet defaults |
+
+### Invalid Fixtures (`testdata/pipelines/invalid/`)
+
+| Fixture | Validation error |
+|---------|-----------------|
+| `no_start.dot` | Missing start node |
+| `no_terminal.dot` | Missing exit node |
+| `unreachable.dot` | Unreachable nodes |
+
+### Integration Tests
+
+The `engine_test.go` file contains integration tests that use both loaded fixtures and inline DOT graphs. Key integration tests:
+
+| Test | What it verifies |
+|------|-----------------|
+| `TestDefaultMaxRetryGraphAttr` | Nodes without `max_retries` inherit `default_max_retry` from graph |
+| `TestEdgeSelectionSuggestedNextIDs` | Handler `SuggestedNextIDs` drives edge selection (priority step 3) |
+| `TestEdgeSelectionPreferredLabel` | Handler `PreferredLabel` drives labeled edge selection (priority step 2) |
+| `TestFidelityModeTruncateInEngine` | Truncate preamble contains goal but not stage list |
+| `TestEventSequencing` | PipelineStarted → StageStarted → StageCompleted → PipelineCompleted order |
+| `TestParallelFanInContextKeys` | Fan-in writes `parallel.fan_in.best_id` / `best_outcome` to context |
+| `TestRetryDotFullChain` | Full `retry.dot`: goal gate retry, allow_partial, default_max_retry inheritance |
+| `TestFullFeaturesPipeline` | Full `full_features.dot`: stylesheet application + review loop with PreferredLabel |
+
+Tests use custom handler stubs (`perNodeHandler`, `suggestedNextHandler`, `preferredLabelHandler`, etc.) registered via custom registries to isolate engine behavior from real LLM backends.

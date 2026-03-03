@@ -1,0 +1,58 @@
+digraph snake_game {
+    graph [goal="Build a playable Snake game as a single self-contained HTML file with inline JavaScript and CSS"]
+
+    start [shape=Mdiamond]
+
+    // Phase 1: Scaffold the HTML file
+    scaffold [shape=box, type="codergen", label="Scaffold",
+        prompt="Create a single snake.html file with an HTML5 boilerplate, a <canvas> element sized 400x400, and an inline <script> block with a skeleton game loop using requestAnimationFrame. Include a <style> block that centers the canvas on the page with a dark background."]
+
+    // Phase 2: Core game logic and rendering in parallel
+    fan_out [shape=component, type="parallel", join="wait_all"]
+
+    game_logic [shape=box, type="codergen", label="Game Logic",
+        prompt="Implement the core Snake game logic in the inline <script>: a snake as an array of {x,y} segments, a direction vector, a food position, a tick function that moves the snake (unshift new head, pop tail unless eating), collision detection against walls and self, and random food placement on empty grid cells. Use a 20x20 grid.",
+        max_retries="2", goal_gate="true",
+        goal="Snake moves, eats food, grows, and dies on collision"]
+
+    renderer [shape=box, type="codergen", label="Renderer",
+        prompt="Implement canvas rendering in the inline <script>: clear the canvas each frame, draw grid lines faintly, draw snake segments as green rounded rectangles, draw food as a red circle, display the current score in the top-left corner, and show a semi-transparent game-over overlay with final score when the game ends.",
+        max_retries="2", goal_gate="true",
+        goal="Board renders correctly on the canvas"]
+
+    fan_in [shape=tripleoctagon, type="parallel.fan_in"]
+
+    // Phase 3: Wire input handling and game loop
+    input_loop [shape=box, type="codergen", label="Input & Loop",
+        prompt="Wire keyboard input (arrow keys and WASD) to change snake direction, preventing 180-degree reversals. Implement the game loop: use setInterval for ticks (150ms) and requestAnimationFrame for rendering. Add a score counter that increments when food is eaten. Support 'r' to restart after game over and 'p' to pause/unpause. Show a start screen that says Press any arrow key to begin.",
+        max_retries="2", goal_gate="true",
+        goal="Game is playable with keyboard controls in the browser"]
+
+    // Phase 4: Review and polish
+    review [shape=house, type="wait.human",
+        prompt="Open snake.html in a browser and play-test. Does it feel responsive? Is the speed reasonable? Any visual glitches? Does it work without a server (just double-click the file)?"]
+
+    fix_issues [shape=box, type="codergen", label="Fix Issues",
+        prompt="Address the play-test feedback. Fix any reported visual glitches, adjust tick speed if needed, and ensure everything works in a single HTML file opened directly in the browser with no external dependencies.",
+        max_retries="3"]
+
+    // Phase 5: Final verification
+    verify_build [shape=box, type="tool", label="Validate HTML",
+        tool_command="test -f snake.html && grep -q '<canvas' snake.html && grep -q 'requestAnimationFrame' snake.html && echo VALID"]
+
+    exit [shape=Msquare]
+
+    // Edges
+    start -> scaffold
+    scaffold -> fan_out
+    fan_out -> game_logic
+    fan_out -> renderer
+    game_logic -> fan_in
+    renderer -> fan_in
+    fan_in -> input_loop
+    input_loop -> review
+    review -> fix_issues   [label="needs work"]
+    review -> verify_build [label="looks good"]
+    fix_issues -> review   [label="re-review"]
+    verify_build -> exit
+}

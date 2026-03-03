@@ -71,8 +71,9 @@ func runCmd() *cobra.Command {
 			}
 
 			// Create LLM client from environment if any API keys are present.
-			// This enables coding_agent pipeline nodes to call real LLMs.
+			// This enables codergen and coding_agent pipeline nodes to call real LLMs.
 			if client, err := clientFromEnv(verbose); err == nil {
+				cfg.CodergenBackend = handler.NewLLMCodergenBackend(client, "")
 				workDir, _ := filepath.Abs(".")
 				env := execenv.NewLocal(workDir)
 				cfg.AgentSessionFactory = handler.DefaultAgentSessionFactory(client, env)

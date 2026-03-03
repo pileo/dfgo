@@ -157,3 +157,5 @@ Select a preset via the `retry_policy` node attribute (default: `"standard"`):
 policy := runtime.PolicyByName("standard")  // falls back to "standard" for unknown names
 delay := policy.DelayForAttempt(3)           // ~800ms ± jitter
 ```
+
+The `retry.dot` fixture exercises multiple presets (`aggressive`, `linear`, `none`) in a single pipeline. `TestRetryDotFullChain` verifies the full retry chain including `default_max_retry` graph inheritance, goal gate retry, `allow_partial`, and linear backoff timing.
