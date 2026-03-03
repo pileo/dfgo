@@ -263,8 +263,8 @@ func TestOnAgentEvent(t *testing.T) {
 		data    map[string]any
 	}{
 		{event.TurnStart, map[string]any{"round": 1}},
-		{event.LLMResponse, map[string]any{"finish_reason": "stop", "input_tokens": 100, "output_tokens": 50}},
-		{event.ToolEnd, map[string]any{"tool": "read", "is_error": false}},
+		{event.LLMResponse, map[string]any{"model": "claude-sonnet-4-20250514", "finish_reason": "stop", "input_tokens": 100, "output_tokens": 50, "text": "Hello world"}},
+		{event.ToolEnd, map[string]any{"tool": "read", "call_id": "call_1", "args": `{"path":"/tmp/foo.txt"}`, "result": "file contents here", "is_error": false}},
 		{event.LoopDetected, map[string]any{"tool": "write"}},
 	}
 
@@ -319,6 +319,9 @@ func TestOnAgentEvent(t *testing.T) {
 		if item.Turn == nil {
 			t.Fatal("turn is nil")
 		}
+		if item.Turn.Text != "Hello world" {
+			t.Errorf("expected text 'Hello world', got %q", item.Turn.Text)
+		}
 		if item.Turn.FinishReason != "stop" {
 			t.Errorf("expected finish_reason 'stop', got %q", item.Turn.FinishReason)
 		}
@@ -327,6 +330,9 @@ func TestOnAgentEvent(t *testing.T) {
 		}
 		if item.Turn.Metrics == nil {
 			t.Fatal("metrics is nil")
+		}
+		if item.Turn.Metrics.Model != "claude-sonnet-4-20250514" {
+			t.Errorf("expected model 'claude-sonnet-4-20250514', got %q", item.Turn.Metrics.Model)
 		}
 		if item.Turn.Metrics.InputTokens != 100 {
 			t.Errorf("expected input_tokens 100, got %d", item.Turn.Metrics.InputTokens)
@@ -354,11 +360,26 @@ func TestOnAgentEvent(t *testing.T) {
 			t.Fatalf("expected 1 tool call, got %d", len(item.Turn.ToolCalls))
 		}
 		tc := item.Turn.ToolCalls[0]
+		if tc.ID != "call_1" {
+			t.Errorf("expected call_id 'call_1', got %q", tc.ID)
+		}
 		if tc.Name != "read" {
 			t.Errorf("expected tool name 'read', got %q", tc.Name)
 		}
+		if tc.Args != `{"path":"/tmp/foo.txt"}` {
+			t.Errorf("expected args with path, got %q", tc.Args)
+		}
 		if tc.Status != cxdbtypes.ToolCallStatusComplete {
 			t.Errorf("expected status complete, got %q", tc.Status)
+		}
+		if tc.Result == nil {
+			t.Fatal("expected result, got nil")
+		}
+		if tc.Result.Content != "file contents here" {
+			t.Errorf("expected result content, got %q", tc.Result.Content)
+		}
+		if !tc.Result.Success {
+			t.Error("expected success=true")
 		}
 	})
 

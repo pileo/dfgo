@@ -181,9 +181,11 @@ func (s *Session) Run(ctx context.Context, input string) Result {
 		s.mu.Unlock()
 
 		s.emitter.Emit(event.LLMResponse, map[string]any{
+			"model":         req.Model,
 			"finish_reason": string(resp.FinishReason),
 			"input_tokens":  resp.Usage.InputTokens,
 			"output_tokens": resp.Usage.OutputTokens,
+			"text":          truncateResult(resp.Text(), 4000),
 		})
 
 		// Translate response to agent message.
@@ -247,6 +249,9 @@ func (s *Session) Run(ctx context.Context, input string) Result {
 
 			s.emitter.Emit(event.ToolEnd, map[string]any{
 				"tool":     tc.Name,
+				"call_id":  tc.ID,
+				"args":     string(tc.Arguments),
+				"result":   truncateResult(result.Content, 4000),
 				"is_error": result.IsError,
 			})
 
@@ -484,5 +489,13 @@ func (s *Session) Usage() llm.Usage {
 // ToolRegistry returns the session's tool registry for external registration.
 func (s *Session) ToolRegistry() *tool.Registry {
 	return s.registry
+}
+
+// truncateResult caps a string to maxLen, appending a marker if truncated.
+func truncateResult(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "…[truncated]"
 }
 

@@ -266,33 +266,43 @@ func agentEventToTurn(nodeID string, evt event.Event) (turnData, bool) {
 			Status:    cxdbtypes.ItemStatusComplete,
 			Timestamp: ts,
 			Turn: &cxdbtypes.AssistantTurn{
+				Text:         str(evt.Data, "text"),
 				FinishReason: str(evt.Data, "finish_reason"),
 				Agent:        nodeID,
 				Metrics: &cxdbtypes.TurnMetrics{
 					InputTokens:  inputTokens,
 					OutputTokens: outputTokens,
 					TotalTokens:  inputTokens + outputTokens,
+					Model:        str(evt.Data, "model"),
 				},
 			},
 		})
 
 	case event.ToolEnd:
 		status := cxdbtypes.ToolCallStatusComplete
-		if boolVal(evt.Data, "is_error") {
+		isError := boolVal(evt.Data, "is_error")
+		if isError {
 			status = cxdbtypes.ToolCallStatusError
+		}
+		tc := cxdbtypes.ToolCallItem{
+			ID:     str(evt.Data, "call_id"),
+			Name:   str(evt.Data, "tool"),
+			Args:   str(evt.Data, "args"),
+			Status: status,
+		}
+		if resultContent := str(evt.Data, "result"); resultContent != "" {
+			tc.Result = &cxdbtypes.ToolCallResult{
+				Content: resultContent,
+				Success: !isError,
+			}
 		}
 		return encodeConversationItem(&cxdbtypes.ConversationItem{
 			ItemType:  cxdbtypes.ItemTypeAssistantTurn,
 			Status:    cxdbtypes.ItemStatusComplete,
 			Timestamp: ts,
 			Turn: &cxdbtypes.AssistantTurn{
-				Agent: nodeID,
-				ToolCalls: []cxdbtypes.ToolCallItem{
-					{
-						Name:   str(evt.Data, "tool"),
-						Status: status,
-					},
-				},
+				Agent:     nodeID,
+				ToolCalls: []cxdbtypes.ToolCallItem{tc},
 			},
 		})
 
