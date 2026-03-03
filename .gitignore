@@ -22,3 +22,6 @@ vendor/
 
 # Run artifacts
 runs/
+
+# direnv
+.envrc
