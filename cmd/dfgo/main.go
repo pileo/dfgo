@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -16,73 +15,80 @@ import (
 	"dfgo/internal/attractor/interviewer"
 	"dfgo/internal/llm"
 	"dfgo/internal/llm/provider"
+
+	"github.com/spf13/cobra"
 )
 
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	if err := rootCmd().Execute(); err != nil {
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	var (
-		logsDir     string
-		autoApprove bool
-		resumeRunID string
-		verbose     bool
-	)
+func rootCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "dfgo",
+		Short: "Attractor pipeline orchestration engine",
+	}
+	root.AddCommand(runCmd())
+	return root
+}
 
-	flag.StringVar(&logsDir, "logs-dir", "runs", "directory for run logs")
-	flag.BoolVar(&autoApprove, "auto-approve", false, "auto-approve all human prompts")
-	flag.StringVar(&resumeRunID, "resume", "", "resume a previous run by ID")
-	flag.BoolVar(&verbose, "verbose", false, "enable verbose logging")
-	flag.Parse()
+func runCmd() *cobra.Command {
+	var logsDir, resumeRunID string
+	var autoApprove, verbose bool
 
-	args := flag.Args()
-	if len(args) < 2 || args[0] != "run" {
-		fmt.Fprintf(os.Stderr, "usage: dfgo run <pipeline.dot> [flags]\n")
-		flag.PrintDefaults()
-		return fmt.Errorf("missing required arguments")
+	cmd := &cobra.Command{
+		Use:   "run <pipeline.dot>",
+		Short: "Execute an Attractor pipeline",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if verbose {
+				slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			}
+
+			dotFile := args[0]
+			dotSource, err := os.ReadFile(dotFile)
+			if err != nil {
+				return fmt.Errorf("read %s: %w", dotFile, err)
+			}
+
+			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+			defer cancel()
+
+			var iv interviewer.Interviewer
+			if autoApprove {
+				iv = &interviewer.AutoApprove{}
+			} else {
+				iv = interviewer.NewConsole()
+			}
+
+			cfg := attractor.EngineConfig{
+				LogsDir:     logsDir,
+				ResumeRunID: resumeRunID,
+				AutoApprove: autoApprove,
+				Interviewer: iv,
+			}
+
+			// Create LLM client from environment if any API keys are present.
+			// This enables coding_agent pipeline nodes to call real LLMs.
+			if client, err := clientFromEnv(verbose); err == nil {
+				workDir, _ := filepath.Abs(".")
+				env := execenv.NewLocal(workDir)
+				cfg.AgentSessionFactory = handler.DefaultAgentSessionFactory(client, env)
+				defer client.Close()
+			}
+
+			return attractor.RunPipeline(ctx, string(dotSource), cfg)
+		},
 	}
 
-	if verbose {
-		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	}
+	cmd.Flags().StringVar(&logsDir, "logs-dir", "runs", "directory for run logs")
+	cmd.Flags().BoolVar(&autoApprove, "auto-approve", false, "auto-approve all human prompts")
+	cmd.Flags().StringVar(&resumeRunID, "resume", "", "resume a previous run by ID")
+	cmd.Flags().BoolVar(&verbose, "verbose", false, "enable verbose logging")
 
-	dotFile := args[1]
-	dotSource, err := os.ReadFile(dotFile)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", dotFile, err)
-	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancel()
-
-	var iv interviewer.Interviewer
-	if autoApprove {
-		iv = &interviewer.AutoApprove{}
-	} else {
-		iv = interviewer.NewConsole()
-	}
-
-	cfg := attractor.EngineConfig{
-		LogsDir:     logsDir,
-		ResumeRunID: resumeRunID,
-		AutoApprove: autoApprove,
-		Interviewer: iv,
-	}
-
-	// Create LLM client from environment if any API keys are present.
-	// This enables coding_agent pipeline nodes to call real LLMs.
-	if client, err := clientFromEnv(verbose); err == nil {
-		workDir, _ := filepath.Abs(".")
-		env := execenv.NewLocal(workDir)
-		cfg.AgentSessionFactory = handler.DefaultAgentSessionFactory(client, env)
-		defer client.Close()
-	}
-
-	return attractor.RunPipeline(ctx, string(dotSource), cfg)
+	return cmd
 }
 
 // clientFromEnv creates an LLM client from available API key environment variables.
