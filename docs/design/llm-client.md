@@ -227,3 +227,42 @@ llm.RetryMiddleware(llm.RetryPolicy{
     Jitter:     true,
 })
 ```
+
+## Model Catalog
+
+A static registry of known models with metadata (`catalog.go`). Provides context window sizes, max output tokens, capability flags, and per-token costs without querying any external API.
+
+### Types
+
+```go
+type Capability string // "tools", "vision", "streaming", "thinking", "caching"
+
+type ModelInfo struct {
+    ID              string
+    Provider        string       // "anthropic", "openai", "gemini"
+    DisplayName     string
+    ContextWindow   int          // max input tokens
+    MaxOutputTokens int          // max output tokens (0 = provider default)
+    Capabilities    []Capability
+    InputCostPer1M  float64      // USD per 1M input tokens
+    OutputCostPer1M float64      // USD per 1M output tokens
+}
+```
+
+`ModelInfo.HasCapability(cap)` checks for a specific capability.
+
+### Lookup Functions
+
+| Function | Description |
+|---|---|
+| `GetModelInfo(modelID)` | Returns metadata for a model ID, or false if unknown |
+| `ListModels(provider)` | Returns all models, optionally filtered by provider (empty string = all) |
+| `GetLatestModel(provider)` | Returns the recommended latest model for a provider |
+
+### Known Models
+
+| Provider | Models |
+|---|---|
+| Anthropic | claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001 |
+| OpenAI | o3, o4-mini, gpt-4.1, gpt-4.1-mini |
+| Gemini | gemini-2.5-pro, gemini-2.5-flash |

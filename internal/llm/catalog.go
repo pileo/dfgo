@@ -13,9 +13,9 @@ const (
 
 // ModelInfo holds static metadata about a known model.
 type ModelInfo struct {
-	ID              string       // e.g. "claude-sonnet-4-20250514"
+	ID              string       // e.g. "claude-sonnet-4-6"
 	Provider        string       // "anthropic", "openai", "gemini"
-	DisplayName     string       // e.g. "Claude Sonnet 4"
+	DisplayName     string       // e.g. "Claude Sonnet 4.6"
 	ContextWindow   int          // max input tokens
 	MaxOutputTokens int          // max output tokens (0 = use provider default)
 	Capabilities    []Capability // supported features
@@ -36,79 +36,79 @@ func (m ModelInfo) HasCapability(cap Capability) bool {
 var models = []ModelInfo{
 	// Anthropic
 	{
-		ID:              "claude-opus-4-20250514",
+		ID:              "claude-opus-4-6",
 		Provider:        "anthropic",
-		DisplayName:     "Claude Opus 4",
+		DisplayName:     "Claude Opus 4.6",
 		ContextWindow:   200000,
-		MaxOutputTokens: 32000,
+		MaxOutputTokens: 128000,
 		Capabilities:    []Capability{CapTools, CapVision, CapStreaming, CapThinking, CapCaching},
-		InputCostPer1M:  15.0,
-		OutputCostPer1M: 75.0,
+		InputCostPer1M:  5.0,
+		OutputCostPer1M: 25.0,
 	},
 	{
-		ID:              "claude-sonnet-4-20250514",
+		ID:              "claude-sonnet-4-6",
 		Provider:        "anthropic",
-		DisplayName:     "Claude Sonnet 4",
+		DisplayName:     "Claude Sonnet 4.6",
 		ContextWindow:   200000,
-		MaxOutputTokens: 16000,
+		MaxOutputTokens: 64000,
 		Capabilities:    []Capability{CapTools, CapVision, CapStreaming, CapThinking, CapCaching},
 		InputCostPer1M:  3.0,
 		OutputCostPer1M: 15.0,
 	},
 	{
-		ID:              "claude-haiku-3-5-20241022",
+		ID:              "claude-haiku-4-5-20251001",
 		Provider:        "anthropic",
-		DisplayName:     "Claude 3.5 Haiku",
+		DisplayName:     "Claude Haiku 4.5",
 		ContextWindow:   200000,
-		MaxOutputTokens: 8192,
-		Capabilities:    []Capability{CapTools, CapVision, CapStreaming, CapCaching},
-		InputCostPer1M:  0.80,
-		OutputCostPer1M: 4.0,
+		MaxOutputTokens: 64000,
+		Capabilities:    []Capability{CapTools, CapVision, CapStreaming, CapThinking, CapCaching},
+		InputCostPer1M:  1.0,
+		OutputCostPer1M: 5.0,
 	},
 	// OpenAI
 	{
-		ID:              "gpt-4o",
+		ID:              "o3",
 		Provider:        "openai",
-		DisplayName:     "GPT-4o",
-		ContextWindow:   128000,
-		MaxOutputTokens: 16384,
-		Capabilities:    []Capability{CapTools, CapVision, CapStreaming},
-		InputCostPer1M:  2.50,
-		OutputCostPer1M: 10.0,
-	},
-	{
-		ID:              "gpt-4o-mini",
-		Provider:        "openai",
-		DisplayName:     "GPT-4o mini",
-		ContextWindow:   128000,
-		MaxOutputTokens: 16384,
-		Capabilities:    []Capability{CapTools, CapVision, CapStreaming},
-		InputCostPer1M:  0.15,
-		OutputCostPer1M: 0.60,
-	},
-	{
-		ID:              "o3-mini",
-		Provider:        "openai",
-		DisplayName:     "o3-mini",
+		DisplayName:     "o3",
 		ContextWindow:   200000,
 		MaxOutputTokens: 100000,
-		Capabilities:    []Capability{CapTools, CapStreaming, CapThinking},
+		Capabilities:    []Capability{CapTools, CapVision, CapStreaming, CapThinking},
+		InputCostPer1M:  2.0,
+		OutputCostPer1M: 8.0,
+	},
+	{
+		ID:              "o4-mini",
+		Provider:        "openai",
+		DisplayName:     "o4-mini",
+		ContextWindow:   200000,
+		MaxOutputTokens: 100000,
+		Capabilities:    []Capability{CapTools, CapVision, CapStreaming, CapThinking},
 		InputCostPer1M:  1.10,
 		OutputCostPer1M: 4.40,
 	},
-	// Gemini
 	{
-		ID:              "gemini-2.0-flash",
-		Provider:        "gemini",
-		DisplayName:     "Gemini 2.0 Flash",
-		ContextWindow:   1048576,
-		MaxOutputTokens: 8192,
+		ID:              "gpt-4.1",
+		Provider:        "openai",
+		DisplayName:     "GPT-4.1",
+		ContextWindow:   1047576,
+		MaxOutputTokens: 32768,
 		Capabilities:    []Capability{CapTools, CapVision, CapStreaming},
-		InputCostPer1M:  0.10,
-		OutputCostPer1M: 0.40,
+		InputCostPer1M:  2.0,
+		OutputCostPer1M: 8.0,
 	},
 	{
-		ID:              "gemini-2.5-pro-preview-05-06",
+		ID:              "gpt-4.1-mini",
+		Provider:        "openai",
+		DisplayName:     "GPT-4.1 mini",
+		ContextWindow:   1047576,
+		MaxOutputTokens: 32768,
+		Capabilities:    []Capability{CapTools, CapVision, CapStreaming},
+		InputCostPer1M:  0.40,
+		OutputCostPer1M: 1.60,
+	},
+	// Gemini
+	{
+		ID:              "gemini-2.5-pro",
 		Provider:        "gemini",
 		DisplayName:     "Gemini 2.5 Pro",
 		ContextWindow:   1048576,
@@ -117,12 +117,22 @@ var models = []ModelInfo{
 		InputCostPer1M:  1.25,
 		OutputCostPer1M: 10.0,
 	},
+	{
+		ID:              "gemini-2.5-flash",
+		Provider:        "gemini",
+		DisplayName:     "Gemini 2.5 Flash",
+		ContextWindow:   1048576,
+		MaxOutputTokens: 65536,
+		Capabilities:    []Capability{CapTools, CapVision, CapStreaming, CapThinking},
+		InputCostPer1M:  0.30,
+		OutputCostPer1M: 2.50,
+	},
 }
 
 var latestModels = map[string]string{
-	"anthropic": "claude-sonnet-4-20250514",
-	"openai":    "gpt-4o",
-	"gemini":    "gemini-2.5-pro-preview-05-06",
+	"anthropic": "claude-sonnet-4-6",
+	"openai":    "o3",
+	"gemini":    "gemini-2.5-pro",
 }
 
 // modelIndex is a lookup map from model ID to ModelInfo, built at init.
