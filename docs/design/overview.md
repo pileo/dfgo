@@ -55,22 +55,35 @@ Parse → Validate → Initialize → Execute → Finalize
 
 ```
 cmd/dfgo
-  └─ attractor (engine, RunPipeline facade)
-       ├─ dot (lexer, parser)
-       ├─ model (Graph, Node, Edge)
-       ├─ runtime (Context, Outcome, Checkpoint)
-       ├─ validate (lint rules)
-       ├─ cond (condition parser/evaluator)
-       ├─ edge (edge selector)
-       ├─ handler (Handler interface, all handlers)
-       │    ├─ interviewer
-       │    └─ fidelity
-       ├─ style (stylesheet)
-       ├─ transform (variable expansion)
-       └─ rundir (run directory, manifest)
+  ├─ attractor (engine, RunPipeline facade)
+  │    ├─ dot (lexer, parser)
+  │    ├─ model (Graph, Node, Edge)
+  │    ├─ runtime (Context, Outcome, Checkpoint)
+  │    ├─ validate (lint rules)
+  │    ├─ cond (condition parser/evaluator)
+  │    ├─ edge (edge selector)
+  │    ├─ handler (Handler interface, all handlers)
+  │    │    ├─ interviewer
+  │    │    ├─ fidelity
+  │    │    ├─ agent ←────────── coding_agent handler
+  │    │    └─ llm ←──────────── LLMCodergenBackend
+  │    ├─ style (stylesheet)
+  │    ├─ transform (variable expansion)
+  │    └─ rundir (run directory, manifest)
+  ├─ llm (unified LLM client)
+  │    └─ provider (anthropic, openai, gemini)
+  └─ agent (coding agent session, core loop)
+       ├─ message (agent-level message types)
+       ├─ event (async event emitter)
+       ├─ tool (Tool interface, registry, 7 core tools)
+       │    └─ truncate (output truncation)
+       ├─ loop (loop detection)
+       ├─ execenv (execution environment)
+       ├─ profile (provider profiles)
+       └─ prompt (system prompt builder)
 ```
 
-All packages under `internal/attractor/` — not importable by external code.
+All packages under `internal/` — not importable by external code.
 
 ## External Dependencies
 

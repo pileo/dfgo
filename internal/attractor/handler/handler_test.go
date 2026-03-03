@@ -7,7 +7,25 @@ import (
 	"dfgo/internal/attractor/interviewer"
 	"dfgo/internal/attractor/model"
 	"dfgo/internal/attractor/runtime"
+	"dfgo/internal/llm"
 )
+
+// mockLLMProvider implements llm.ProviderAdapter for handler tests.
+type mockLLMProvider struct {
+	response string
+}
+
+func (m *mockLLMProvider) Name() string { return "mock" }
+func (m *mockLLMProvider) Complete(_ context.Context, _ llm.Request) (*llm.Response, error) {
+	return &llm.Response{
+		Message:      llm.TextMessage(llm.RoleAssistant, m.response),
+		FinishReason: llm.FinishStop,
+	}, nil
+}
+
+func newMockClient(prov llm.ProviderAdapter) *llm.Client {
+	return llm.NewClient(llm.WithProvider(prov))
+}
 
 func TestStartHandler(t *testing.T) {
 	h := &StartHandler{}
@@ -213,6 +231,58 @@ func TestManagerLoopHandlerStub(t *testing.T) {
 	o, err := h.Execute(context.Background(), &model.Node{ID: "loop"}, runtime.NewContext(), model.NewGraph("test"), "")
 	if err != nil || o.Status != runtime.StatusSuccess {
 		t.Fatal("manager_loop stub should succeed")
+	}
+}
+
+func TestCodingAgentHandlerStub(t *testing.T) {
+	h := NewCodingAgentHandler(nil)
+	node := &model.Node{ID: "agent1", Attrs: map[string]string{"prompt": "fix the bug"}}
+	o, err := h.Execute(context.Background(), node, runtime.NewContext(), model.NewGraph("test"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Status != runtime.StatusSuccess {
+		t.Fatalf("expected success, got %s: %s", o.Status, o.FailureReason)
+	}
+	if o.ContextUpdates["agent1.response"] != "(stub agent response)" {
+		t.Error("expected stub response in context updates")
+	}
+}
+
+func TestCodingAgentHandlerMissingPrompt(t *testing.T) {
+	h := NewCodingAgentHandler(nil)
+	node := &model.Node{ID: "agent2", Attrs: map[string]string{}}
+	o, err := h.Execute(context.Background(), node, runtime.NewContext(), model.NewGraph("test"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Status != runtime.StatusFail {
+		t.Fatal("expected fail for missing prompt")
+	}
+}
+
+func TestCodingAgentHandlerRegistered(t *testing.T) {
+	r := DefaultRegistry()
+	node := &model.Node{ID: "a", Attrs: map[string]string{"type": "coding_agent"}}
+	h, err := r.Lookup(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := h.(*CodingAgentHandler); !ok {
+		t.Fatal("expected CodingAgentHandler for type=coding_agent")
+	}
+}
+
+func TestLLMCodergenBackend(t *testing.T) {
+	prov := &mockLLMProvider{response: "generated"}
+	client := newMockClient(prov)
+	backend := NewLLMCodergenBackend(client, "test-model")
+	resp, err := backend.Generate(context.Background(), "write code", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp != "generated" {
+		t.Errorf("response = %q", resp)
 	}
 }
 

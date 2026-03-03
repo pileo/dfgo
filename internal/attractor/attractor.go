@@ -28,6 +28,9 @@ type EngineConfig struct {
 	// CodergenBackend is the LLM backend for codergen stages.
 	CodergenBackend handler.CodergenBackend
 
+	// AgentSessionFactory creates coding agent sessions for coding_agent stages.
+	AgentSessionFactory handler.AgentSessionFactory
+
 	// Interviewer is used for human interaction stages.
 	Interviewer interviewer.Interviewer
 
@@ -48,6 +51,9 @@ func RunPipeline(ctx context.Context, dotSource string, cfg EngineConfig) error 
 		}
 		if iv != nil {
 			opts = append(opts, handler.WithInterviewer(iv))
+		}
+		if cfg.AgentSessionFactory != nil {
+			opts = append(opts, handler.WithAgentSessionFactory(cfg.AgentSessionFactory))
 		}
 		cfg.Registry = handler.DefaultRegistry(opts...)
 	}

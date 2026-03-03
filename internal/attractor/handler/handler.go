@@ -93,13 +93,15 @@ func DefaultRegistry(opts ...RegistryOption) *Registry {
 	r.RegisterType("parallel.fan_in", &FanInHandler{})
 	r.RegisterType("tool", &ToolHandler{})
 	r.RegisterType("stack.manager_loop", &ManagerLoopHandler{})
+	r.RegisterType("coding_agent", NewCodingAgentHandler(cfg.agentSessionFactory))
 
 	return r
 }
 
 type registryConfig struct {
-	codergenBackend CodergenBackend
-	interviewer     interviewer.Interviewer
+	codergenBackend     CodergenBackend
+	interviewer         interviewer.Interviewer
+	agentSessionFactory AgentSessionFactory
 }
 
 // RegistryOption configures the registry.
@@ -113,4 +115,9 @@ func WithCodergenBackend(b CodergenBackend) RegistryOption {
 // WithInterviewer sets the interviewer for human interaction handlers.
 func WithInterviewer(iv interviewer.Interviewer) RegistryOption {
 	return func(c *registryConfig) { c.interviewer = iv }
+}
+
+// WithAgentSessionFactory sets the factory for creating coding agent sessions.
+func WithAgentSessionFactory(f AgentSessionFactory) RegistryOption {
+	return func(c *registryConfig) { c.agentSessionFactory = f }
 }

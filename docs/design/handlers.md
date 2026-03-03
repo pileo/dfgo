@@ -48,6 +48,7 @@ The registry maps node types and shapes to handler instances. Lookup priority: `
 registry := handler.DefaultRegistry(
     handler.WithCodergenBackend(myBackend),
     handler.WithInterviewer(myInterviewer),
+    handler.WithAgentSessionFactory(myFactory),
 )
 h, err := registry.Lookup(node)
 ```
@@ -141,3 +142,12 @@ The `opts` map includes the node ID, graph goal, and all non-reserved node attri
 - **Shape**: `house`
 - **Behavior**: Manages iterative refinement by executing child nodes in a loop until a goal is met.
 - **Current status**: stub — succeeds immediately. The `ChildEngine` callback must be wired for real sub-pipeline execution.
+
+### CodingAgentHandler
+
+- **Type**: `coding_agent`
+- **Behavior**: Runs a full autonomous agent session (agentic loop with tools) as a pipeline stage. Reads the node's `prompt` attribute, executes an agent `Session.Run()`, stores the final text in context as `{node_id}.response`.
+- **Configuration**: `AgentSessionFactory` — injected via `WithAgentSessionFactory()` registry option or `EngineConfig.AgentSessionFactory`
+- **Attributes**: `prompt` (required), `model`, `provider`, `max_rounds`
+- **Stub mode**: if no session factory is configured, returns a placeholder response
+- **See**: [coding-agent-handler.md](coding-agent-handler.md) for full details
