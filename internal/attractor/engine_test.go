@@ -2,12 +2,15 @@ package attractor
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"dfgo/internal/attractor/events"
 	"dfgo/internal/attractor/handler"
 	"dfgo/internal/attractor/model"
 	"dfgo/internal/attractor/runtime"
@@ -602,6 +605,259 @@ type alwaysFailHandler struct{}
 
 func (h *alwaysFailHandler) Execute(_ context.Context, _ *model.Node, _ *runtime.Context, _ *model.Graph, _ string) (runtime.Outcome, error) {
 	return runtime.FailOutcome("failed", runtime.FailureTransient), nil
+}
+
+func TestNodeStatusJSON(t *testing.T) {
+	src := `digraph test {
+		start [shape=Mdiamond]
+		work [shape=box, type="capture"]
+		exit [shape=Msquare]
+		start -> work -> exit
+	}`
+	h := &contextCaptureHandler{}
+	reg := handler.NewRegistry()
+	reg.RegisterType("capture", h)
+	reg.RegisterShape("Mdiamond", &handler.StartHandler{})
+	dir := t.TempDir()
+
+	err := RunPipeline(context.Background(), src, EngineConfig{
+		LogsDir:  dir,
+		Registry: reg,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Find the run directory and check for status.json in the work node dir.
+	entries, _ := os.ReadDir(dir)
+	if len(entries) == 0 {
+		t.Fatal("expected run directory")
+	}
+	runDir := filepath.Join(dir, entries[0].Name())
+
+	statusPath := filepath.Join(runDir, "work", "status.json")
+	data, err := os.ReadFile(statusPath)
+	if err != nil {
+		t.Fatalf("expected status.json at %s: %v", statusPath, err)
+	}
+
+	var status nodeStatus
+	if err := json.Unmarshal(data, &status); err != nil {
+		t.Fatalf("invalid status.json: %v", err)
+	}
+	if status.Outcome != "SUCCESS" {
+		t.Fatalf("expected SUCCESS, got %s", status.Outcome)
+	}
+}
+
+func TestEventsEmitted(t *testing.T) {
+	src := `digraph test {
+		start [shape=Mdiamond]
+		work [shape=box, type="capture"]
+		exit [shape=Msquare]
+		start -> work -> exit
+	}`
+	h := &contextCaptureHandler{}
+	reg := handler.NewRegistry()
+	reg.RegisterType("capture", h)
+	reg.RegisterShape("Mdiamond", &handler.StartHandler{})
+	dir := t.TempDir()
+
+	engine := NewEngine(EngineConfig{
+		LogsDir:  dir,
+		Registry: reg,
+	})
+
+	// Run parse + validate + initialize to get event emitter
+	g, err := engine.parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine.Graph = g
+	if err := engine.applyStylesheet(g); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.validate(g); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.initialize(g); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var received []events.Event
+	engine.Events.On(func(evt events.Event) {
+		mu.Lock()
+		received = append(received, evt)
+		mu.Unlock()
+	})
+
+	if err := engine.execute(context.Background(), g); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.finalize(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for events to drain.
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Should have PipelineStarted, at least one StageStarted/StageCompleted, PipelineCompleted.
+	typeSet := make(map[events.Type]bool)
+	for _, evt := range received {
+		typeSet[evt.Type] = true
+	}
+
+	if !typeSet[events.PipelineStarted] {
+		t.Error("expected PipelineStarted event")
+	}
+	if !typeSet[events.PipelineCompleted] {
+		t.Error("expected PipelineCompleted event")
+	}
+	if !typeSet[events.StageStarted] {
+		t.Error("expected StageStarted event")
+	}
+}
+
+func TestStylesheetApplication(t *testing.T) {
+	// Pipeline with a model_stylesheet that sets llm_model on box nodes.
+	src := `digraph test {
+		model_stylesheet="* { llm_model: gpt-4; }\n.box { temperature: 0.5; }"
+		start [shape=Mdiamond]
+		work [shape=box, type="capture"]
+		explicit [shape=box, type="capture", llm_model="claude-3"]
+		exit [shape=Msquare]
+		start -> work -> explicit -> exit
+	}`
+	h := &contextCaptureHandler{}
+	reg := handler.NewRegistry()
+	reg.RegisterType("capture", h)
+	reg.RegisterShape("Mdiamond", &handler.StartHandler{})
+	dir := t.TempDir()
+
+	engine := NewEngine(EngineConfig{
+		LogsDir:  dir,
+		Registry: reg,
+	})
+
+	g, err := engine.parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine.Graph = g
+
+	if err := engine.applyStylesheet(g); err != nil {
+		t.Fatal(err)
+	}
+
+	// "work" should get llm_model=gpt-4 and temperature=0.5.
+	work := g.NodeByID("work")
+	if work.Attrs["llm_model"] != "gpt-4" {
+		t.Fatalf("expected llm_model=gpt-4 on work, got %s", work.Attrs["llm_model"])
+	}
+	if work.Attrs["temperature"] != "0.5" {
+		t.Fatalf("expected temperature=0.5 on work, got %s", work.Attrs["temperature"])
+	}
+
+	// "explicit" should keep its explicit llm_model but get temperature from stylesheet.
+	explicit := g.NodeByID("explicit")
+	if explicit.Attrs["llm_model"] != "claude-3" {
+		t.Fatalf("expected llm_model=claude-3 on explicit (not overridden), got %s", explicit.Attrs["llm_model"])
+	}
+	if explicit.Attrs["temperature"] != "0.5" {
+		t.Fatalf("expected temperature=0.5 on explicit, got %s", explicit.Attrs["temperature"])
+	}
+}
+
+func TestPreambleSetInContext(t *testing.T) {
+	src := `digraph test {
+		goal="test goal"
+		start [shape=Mdiamond]
+		work [shape=box, type="capture"]
+		exit [shape=Msquare]
+		start -> work -> exit
+	}`
+	h := &contextCaptureHandler{}
+	reg := handler.NewRegistry()
+	reg.RegisterType("capture", h)
+	reg.RegisterShape("Mdiamond", &handler.StartHandler{})
+	dir := t.TempDir()
+
+	err := RunPipeline(context.Background(), src, EngineConfig{
+		LogsDir:  dir,
+		Registry: reg,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.snapshots) == 0 {
+		t.Fatal("expected at least one snapshot")
+	}
+	// The preamble should have been set before handler execution.
+	// Default fidelity is compact, so internal.preamble should be non-empty.
+	preamble := h.snapshots[len(h.snapshots)-1]["internal.preamble"]
+	if preamble == "" {
+		t.Fatal("expected internal.preamble to be set")
+	}
+}
+
+func TestContextLogs(t *testing.T) {
+	src := `digraph test {
+		start [shape=Mdiamond]
+		work [shape=box, type="logger"]
+		exit [shape=Msquare]
+		start -> work -> exit
+	}`
+	logHandler := &loggingTestHandler{}
+	reg := handler.NewRegistry()
+	reg.RegisterType("logger", logHandler)
+	reg.RegisterShape("Mdiamond", &handler.StartHandler{})
+	dir := t.TempDir()
+
+	engine := NewEngine(EngineConfig{
+		LogsDir:  dir,
+		Registry: reg,
+	})
+	err := engine.Run(context.Background(), src)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	logs := engine.PCtx.Logs()
+	if len(logs) != 1 || logs[0] != "handler was here" {
+		t.Fatalf("expected context log from handler, got %v", logs)
+	}
+}
+
+// loggingTestHandler appends to context logs.
+type loggingTestHandler struct{}
+
+func (h *loggingTestHandler) Execute(_ context.Context, _ *model.Node, pctx *runtime.Context, _ *model.Graph, _ string) (runtime.Outcome, error) {
+	pctx.AppendLog("handler was here")
+	return runtime.SuccessOutcome(), nil
+}
+
+func TestArtifactStoreAvailable(t *testing.T) {
+	src := `digraph test {
+		start [shape=Mdiamond]
+		exit [shape=Msquare]
+		start -> exit
+	}`
+	dir := t.TempDir()
+	engine := NewEngine(EngineConfig{
+		LogsDir: dir,
+	})
+	engine.Registry = handler.DefaultRegistry()
+	err := engine.Run(context.Background(), src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if engine.Artifacts == nil {
+		t.Fatal("expected artifact store to be initialized")
+	}
 }
 
 func TestResolveRetryTarget(t *testing.T) {

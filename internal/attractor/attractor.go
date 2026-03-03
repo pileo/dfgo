@@ -6,6 +6,7 @@ package attractor
 import (
 	"context"
 
+	"dfgo/internal/attractor/artifact"
 	"dfgo/internal/attractor/handler"
 	"dfgo/internal/attractor/interviewer"
 )
@@ -36,6 +37,10 @@ type EngineConfig struct {
 
 	// AutoApprove makes the engine auto-approve all human prompts.
 	AutoApprove bool
+
+	// Artifacts is an optional artifact store for the pipeline.
+	// If nil, one is created automatically using the run directory.
+	Artifacts *artifact.Store
 }
 
 // RunPipeline is a convenience function that creates an engine and runs a pipeline.

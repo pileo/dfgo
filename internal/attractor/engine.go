@@ -2,14 +2,20 @@ package attractor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
+	"dfgo/internal/attractor/artifact"
 	"dfgo/internal/attractor/dot"
 	"dfgo/internal/attractor/edge"
+	"dfgo/internal/attractor/events"
 	"dfgo/internal/attractor/fidelity"
+	"dfgo/internal/attractor/style"
 	"dfgo/internal/attractor/handler"
 	"dfgo/internal/attractor/model"
 	"dfgo/internal/attractor/rundir"
@@ -22,17 +28,19 @@ import (
 
 // Engine orchestrates the 5-phase Attractor pipeline lifecycle.
 type Engine struct {
-	Config   EngineConfig
-	Registry *handler.Registry
-	Graph    *model.Graph
-	RunDir   *rundir.RunDir
-	PCtx     *runtime.Context
-	RunID    string
+	Config    EngineConfig
+	Registry  *handler.Registry
+	Graph     *model.Graph
+	RunDir    *rundir.RunDir
+	PCtx      *runtime.Context
+	RunID     string
+	Artifacts *artifact.Store
+	Events    *events.Emitter
 
-	checkpoint     *runtime.Checkpoint
-	retryCounters  map[string]int
-	completed      map[string]bool
-	visitLog       []runtime.VisitEntry
+	checkpoint      *runtime.Checkpoint
+	retryCounters   map[string]int
+	completed       map[string]bool
+	visitLog        []runtime.VisitEntry
 	transformRunner *transform.Runner
 }
 
@@ -56,6 +64,11 @@ func (e *Engine) Run(ctx context.Context, dotSource string) error {
 	}
 	e.Graph = g
 
+	// Apply stylesheet transform (between parse and validate)
+	if err := e.applyStylesheet(g); err != nil {
+		return fmt.Errorf("stylesheet: %w", err)
+	}
+
 	// Phase 2: Validate
 	if err := e.validate(g); err != nil {
 		return fmt.Errorf("validate: %w", err)
@@ -68,11 +81,76 @@ func (e *Engine) Run(ctx context.Context, dotSource string) error {
 
 	// Phase 4: Execute
 	if err := e.execute(ctx, g); err != nil {
+		if e.Events != nil {
+			e.Events.Emit(events.PipelineFailed, map[string]any{
+				"run_id": e.RunID,
+				"error":  err.Error(),
+			})
+			e.Events.Close()
+		}
 		return fmt.Errorf("execute: %w", err)
 	}
 
 	// Phase 5: Finalize
 	return e.finalize()
+}
+
+// nodeStatus is the JSON structure written to each node's status.json.
+type nodeStatus struct {
+	Outcome            string            `json:"outcome"`
+	PreferredNextLabel string            `json:"preferred_next_label"`
+	SuggestedNextIDs   []string          `json:"suggested_next_ids"`
+	ContextUpdates     map[string]string `json:"context_updates"`
+	Notes              string            `json:"notes"`
+}
+
+// writeNodeStatus writes a status.json file to the node's log directory.
+func (e *Engine) writeNodeStatus(node *model.Node, outcome runtime.Outcome) {
+	if e.RunDir == nil {
+		return
+	}
+	dir, err := e.RunDir.NodeDir(node.ID)
+	if err != nil {
+		slog.Error("failed to create node dir for status", "node", node.ID, "error", err)
+		return
+	}
+	nextIDs := outcome.SuggestedNextIDs
+	if nextIDs == nil {
+		nextIDs = []string{}
+	}
+	updates := outcome.ContextUpdates
+	if updates == nil {
+		updates = map[string]string{}
+	}
+	status := nodeStatus{
+		Outcome:            string(outcome.Status),
+		PreferredNextLabel: outcome.PreferredLabel,
+		SuggestedNextIDs:   nextIDs,
+		ContextUpdates:     updates,
+		Notes:              outcome.Notes,
+	}
+	data, err := json.MarshalIndent(status, "", "  ")
+	if err != nil {
+		slog.Error("failed to marshal node status", "node", node.ID, "error", err)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(dir, "status.json"), data, 0o644); err != nil {
+		slog.Error("failed to write node status", "node", node.ID, "error", err)
+	}
+}
+
+func (e *Engine) applyStylesheet(g *model.Graph) error {
+	src, ok := g.Attrs["model_stylesheet"]
+	if !ok || src == "" {
+		return nil
+	}
+	ss, err := style.ParseStylesheet(src)
+	if err != nil {
+		return fmt.Errorf("parse stylesheet: %w", err)
+	}
+	ss.Apply(g)
+	slog.Info("applied stylesheet", "rules", len(ss.Rules))
+	return nil
 }
 
 func (e *Engine) parse(dotSource string) (*model.Graph, error) {
@@ -123,6 +201,16 @@ func (e *Engine) initialize(g *model.Graph) error {
 	}
 	e.RunDir = rd
 
+	// Initialize event emitter
+	e.Events = events.NewEmitter(256)
+
+	// Initialize artifact store
+	if e.Config.Artifacts != nil {
+		e.Artifacts = e.Config.Artifacts
+	} else {
+		e.Artifacts = artifact.NewStore(rd.ArtifactsDir())
+	}
+
 	// Initialize context
 	e.PCtx = runtime.NewContext()
 	if goal := g.Attrs["goal"]; goal != "" {
@@ -152,6 +240,9 @@ func (e *Engine) initialize(g *model.Graph) error {
 		} else {
 			e.checkpoint = cp
 			e.PCtx.Merge(cp.Context)
+			for _, entry := range cp.Logs {
+				e.PCtx.AppendLog(entry)
+			}
 			e.retryCounters = cp.RetryCounters
 			for _, id := range cp.Completed {
 				e.completed[id] = true
@@ -177,6 +268,11 @@ func (e *Engine) execute(ctx context.Context, g *model.Graph) error {
 	}
 
 	slog.Info("starting execution", "node", currentID)
+	e.Events.Emit(events.PipelineStarted, map[string]any{
+		"run_id":   e.RunID,
+		"pipeline": g.Name,
+		"start":    currentID,
+	})
 
 	for {
 		select {
@@ -220,12 +316,37 @@ func (e *Engine) execute(ctx context.Context, g *model.Graph) error {
 
 		// Set current_node before execution
 		e.PCtx.Set("current_node", currentID)
+		e.Events.Emit(events.StageStarted, map[string]any{
+			"node_id": currentID,
+			"type":    node.StringAttr("type", ""),
+			"shape":   node.StringAttr("shape", ""),
+		})
 
 		// Execute the node
 		outcome, err := e.executeNode(ctx, g, node)
 		if err != nil {
+			e.Events.Emit(events.StageFailed, map[string]any{
+				"node_id": currentID,
+				"error":   err.Error(),
+			})
 			return fmt.Errorf("execute node %q: %w", currentID, err)
 		}
+
+		if outcome.IsSuccess() {
+			e.Events.Emit(events.StageCompleted, map[string]any{
+				"node_id": currentID,
+				"status":  string(outcome.Status),
+			})
+		} else if outcome.Status == runtime.StatusFail {
+			e.Events.Emit(events.StageFailed, map[string]any{
+				"node_id": currentID,
+				"status":  string(outcome.Status),
+				"reason":  outcome.FailureReason,
+			})
+		}
+
+		// Write per-node status.json
+		e.writeNodeStatus(node, outcome)
 
 		slog.Info("node completed", "node", currentID, "status", outcome.Status, "label", outcome.PreferredLabel)
 
@@ -251,6 +372,11 @@ func (e *Engine) execute(ctx context.Context, g *model.Graph) error {
 				e.retryCounters[currentID]++
 				e.PCtx.Set("internal.retry_count."+currentID, strconv.Itoa(e.retryCounters[currentID]))
 				slog.Info("retrying node", "node", currentID, "attempt", e.retryCounters[currentID], "max", maxRetries)
+				e.Events.Emit(events.StageRetrying, map[string]any{
+					"node_id": currentID,
+					"attempt": e.retryCounters[currentID],
+					"max":     maxRetries,
+				})
 				e.saveCheckpoint(currentID)
 				policy := runtime.PolicyByName(node.StringAttr("retry_policy", "standard"))
 				delay := policy.DelayForAttempt(e.retryCounters[currentID])
@@ -331,10 +457,15 @@ func (e *Engine) executeNode(ctx context.Context, g *model.Graph, node *model.No
 		return runtime.Outcome{}, err
 	}
 
-	// Apply fidelity if handler supports it
+	// Resolve fidelity and generate preamble
+	mode := fidelity.Resolve(nil, node, g)
 	if fh, ok := h.(handler.FidelityAwareHandler); ok {
-		mode := fidelity.Resolve(nil, node, g)
 		fh.SetFidelity(mode)
+	}
+	goal, _ := e.PCtx.Get("goal")
+	preamble := fidelity.GeneratePreamble(mode, e.RunID, goal, e.visitLog)
+	if preamble != "" {
+		e.PCtx.Set("internal.preamble", preamble)
 	}
 
 	// Prepare logs directory
@@ -404,10 +535,15 @@ func (e *Engine) saveCheckpoint(currentNode string) {
 		Completed:     completedList,
 		RetryCounters: e.retryCounters,
 		Context:       e.PCtx.Snapshot(),
+		Logs:          e.PCtx.Logs(),
 		VisitLog:      e.visitLog,
 	}
 	if err := cp.Save(e.RunDir.CheckpointPath()); err != nil {
 		slog.Error("failed to save checkpoint", "error", err)
+	} else if e.Events != nil {
+		e.Events.Emit(events.CheckpointSaved, map[string]any{
+			"current_node": currentNode,
+		})
 	}
 }
 
@@ -416,6 +552,12 @@ func (e *Engine) finalize() error {
 
 	// Save final checkpoint
 	e.saveCheckpoint("")
+
+	e.Events.Emit(events.PipelineCompleted, map[string]any{
+		"run_id":   e.RunID,
+		"pipeline": e.Graph.Name,
+	})
+	e.Events.Close()
 
 	// Update manifest
 	if e.RunDir != nil {

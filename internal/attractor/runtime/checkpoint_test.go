@@ -76,3 +76,63 @@ func TestLoadCheckpointNotFound(t *testing.T) {
 		t.Fatal("expected error for missing file")
 	}
 }
+
+func TestCheckpointWithLogs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "checkpoint.json")
+
+	cp := &Checkpoint{
+		RunID:         "run-logs",
+		CurrentNode:   "B",
+		Completed:     []string{"A"},
+		RetryCounters: map[string]int{},
+		Context:       map[string]string{},
+		Logs:          []string{"entry1", "entry2"},
+		VisitLog: []VisitEntry{
+			{NodeID: "A", Status: StatusSuccess, Attempt: 1},
+		},
+	}
+
+	if err := cp.Save(path); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadCheckpoint(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(loaded.Logs) != 2 {
+		t.Fatalf("expected 2 logs, got %d", len(loaded.Logs))
+	}
+	if loaded.Logs[0] != "entry1" || loaded.Logs[1] != "entry2" {
+		t.Fatalf("unexpected logs: %v", loaded.Logs)
+	}
+}
+
+func TestCheckpointEmptyLogs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "checkpoint.json")
+
+	cp := &Checkpoint{
+		RunID:         "run-no-logs",
+		CurrentNode:   "A",
+		Completed:     []string{},
+		RetryCounters: map[string]int{},
+		Context:       map[string]string{},
+		VisitLog:      []VisitEntry{},
+	}
+
+	if err := cp.Save(path); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadCheckpoint(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if loaded.Logs != nil && len(loaded.Logs) != 0 {
+		t.Fatalf("expected nil or empty logs, got %v", loaded.Logs)
+	}
+}

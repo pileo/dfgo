@@ -139,3 +139,95 @@ func TestResolveEmpty(t *testing.T) {
 		t.Fatal("expected empty props for empty stylesheet")
 	}
 }
+
+func TestSelectorMatchesClass(t *testing.T) {
+	// Node with class attribute (comma-separated).
+	n := &model.Node{ID: "n1", Attrs: map[string]string{
+		"shape": "box",
+		"class": "agent, worker",
+	}}
+
+	if !ParseSelector(".agent").Matches(n) {
+		t.Fatal("class 'agent' should match")
+	}
+	if !ParseSelector(".worker").Matches(n) {
+		t.Fatal("class 'worker' should match")
+	}
+	if !ParseSelector(".box").Matches(n) {
+		t.Fatal("shape 'box' should still match")
+	}
+	if ParseSelector(".manager").Matches(n) {
+		t.Fatal("class 'manager' should not match")
+	}
+
+	// Node with no class.
+	n2 := &model.Node{ID: "n2", Attrs: map[string]string{"shape": "diamond"}}
+	if ParseSelector(".agent").Matches(n2) {
+		t.Fatal("should not match without class attr")
+	}
+}
+
+func TestApply(t *testing.T) {
+	src := `
+* {
+    llm_model: gpt-4;
+    temperature: 0.7;
+}
+.box {
+    llm_model: claude-3;
+}
+`
+	ss, err := ParseStylesheet(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := model.NewGraph("test")
+	// Node with explicit llm_model should not be overridden.
+	n1 := &model.Node{ID: "n1", Attrs: map[string]string{
+		"shape":     "box",
+		"llm_model": "gemini",
+	}}
+	// Node without explicit attrs should get stylesheet values.
+	n2 := &model.Node{ID: "n2", Attrs: map[string]string{
+		"shape": "diamond",
+	}}
+	g.AddNode(n1)
+	g.AddNode(n2)
+
+	ss.Apply(g)
+
+	// n1: explicit llm_model preserved, temperature added.
+	if n1.Attrs["llm_model"] != "gemini" {
+		t.Fatalf("explicit attr should not be overridden, got %s", n1.Attrs["llm_model"])
+	}
+	if n1.Attrs["temperature"] != "0.7" {
+		t.Fatalf("expected temperature=0.7, got %s", n1.Attrs["temperature"])
+	}
+
+	// n2: gets universal defaults.
+	if n2.Attrs["llm_model"] != "gpt-4" {
+		t.Fatalf("expected gpt-4 from universal, got %s", n2.Attrs["llm_model"])
+	}
+	if n2.Attrs["temperature"] != "0.7" {
+		t.Fatalf("expected temperature=0.7, got %s", n2.Attrs["temperature"])
+	}
+}
+
+func TestApplyNoOverrideExplicit(t *testing.T) {
+	src := `#myNode { fidelity: full; }`
+	ss, err := ParseStylesheet(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	g := model.NewGraph("test")
+	n := &model.Node{ID: "myNode", Attrs: map[string]string{"fidelity": "compact"}}
+	g.AddNode(n)
+
+	ss.Apply(g)
+
+	if n.Attrs["fidelity"] != "compact" {
+		t.Fatalf("explicit fidelity should not be overridden, got %s", n.Attrs["fidelity"])
+	}
+}

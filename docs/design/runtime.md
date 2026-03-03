@@ -6,21 +6,26 @@ Holds all mutable execution state: the pipeline context, stage outcomes, and che
 
 ## Context
 
-A thread-safe key-value store (`map[string]string` under a `sync.RWMutex`) that accumulates state as the pipeline runs.
+A thread-safe key-value store (`map[string]string` under a `sync.RWMutex`) that accumulates state as the pipeline runs. Also maintains an append-only log for recording execution events.
 
 ```go
 ctx := runtime.NewContext()
 ctx.Set("project", "dfgo")
 val, ok := ctx.Get("project")    // "dfgo", true
 ctx.Merge(map[string]string{"a": "1", "b": "2"})
-snap := ctx.Snapshot()            // returns a copy
-clone := ctx.Clone()              // independent deep copy
+snap := ctx.Snapshot()            // returns a copy of KV pairs
+clone := ctx.Clone()              // independent deep copy (includes logs)
 ctx.Delete("a")
+
+// Append-only log
+ctx.AppendLog("started processing")
+ctx.AppendLog("completed step A")
+logs := ctx.Logs()               // returns a copy: ["started processing", "completed step A"]
 ```
 
 ### Thread Safety
 
-All methods are goroutine-safe. `Get` and `Snapshot` use read locks; `Set`, `Delete`, and `Merge` use write locks. This matters for parallel handler execution where multiple goroutines may read/write context concurrently.
+All methods are goroutine-safe. `Get`, `Snapshot`, and `Logs` use read locks; `Set`, `Delete`, `Merge`, and `AppendLog` use write locks. This matters for parallel handler execution where multiple goroutines may read/write context concurrently.
 
 ### How Context Flows
 
@@ -44,6 +49,7 @@ The engine automatically sets these keys:
 | `outcome` | After each handler call | Status string (e.g., `"SUCCESS"`, `"FAIL"`) |
 | `preferred_label` | After each handler call | Outcome's preferred label (if non-empty) |
 | `internal.retry_count.<nodeID>` | On retry | Retry count as string (e.g., `"1"`, `"2"`) |
+| `internal.preamble` | Before each handler call | Fidelity-based context summary for LLM prompts |
 
 ## Outcome
 
@@ -99,6 +105,7 @@ type Checkpoint struct {
     Completed     []string           // node IDs already finished
     RetryCounters map[string]int     // per-node retry counts
     Context       map[string]string  // full context snapshot
+    Logs          []string           // append-only context log entries
     VisitLog      []VisitEntry       // ordered history of node visits
 }
 ```

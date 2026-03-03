@@ -4,9 +4,11 @@ package runtime
 import "sync"
 
 // Context is a thread-safe key-value store for pipeline execution state.
+// It also maintains an append-only log for recording execution events.
 type Context struct {
 	mu   sync.RWMutex
 	data map[string]string
+	logs []string
 }
 
 // NewContext creates an empty Context.
@@ -59,7 +61,11 @@ func (c *Context) Snapshot() map[string]string {
 
 // Clone returns a deep copy of the context.
 func (c *Context) Clone() *Context {
-	return &Context{data: c.Snapshot()}
+	c.mu.RLock()
+	logs := make([]string, len(c.logs))
+	copy(logs, c.logs)
+	c.mu.RUnlock()
+	return &Context{data: c.Snapshot(), logs: logs}
 }
 
 // Len returns the number of entries.
@@ -67,4 +73,20 @@ func (c *Context) Len() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return len(c.data)
+}
+
+// AppendLog adds an entry to the append-only log.
+func (c *Context) AppendLog(entry string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.logs = append(c.logs, entry)
+}
+
+// Logs returns a copy of all log entries.
+func (c *Context) Logs() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make([]string, len(c.logs))
+	copy(out, c.logs)
+	return out
 }

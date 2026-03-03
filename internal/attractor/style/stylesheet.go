@@ -52,6 +52,8 @@ func ParseSelector(s string) Selector {
 }
 
 // Matches returns true if the selector matches the given node.
+// Class selectors match against both the "shape" attribute and the "class"
+// attribute (parsed as a comma-separated list).
 func (s Selector) Matches(n *model.Node) bool {
 	switch s.Type {
 	case "*":
@@ -59,7 +61,15 @@ func (s Selector) Matches(n *model.Node) bool {
 	case "#":
 		return n.ID == s.Value
 	case ".":
-		return n.Attrs["shape"] == s.Value
+		if n.Attrs["shape"] == s.Value {
+			return true
+		}
+		for _, cls := range strings.Split(n.Attrs["class"], ",") {
+			if strings.TrimSpace(cls) == s.Value {
+				return true
+			}
+		}
+		return false
 	}
 	return false
 }
@@ -126,6 +136,20 @@ func parseProperties(body string) map[string]string {
 		}
 	}
 	return props
+}
+
+// Apply applies the stylesheet to all nodes in the graph. Stylesheet properties
+// are set on nodes only when the node doesn't already have an explicit value
+// for that attribute.
+func (ss Stylesheet) Apply(g *model.Graph) {
+	for _, n := range g.Nodes {
+		props := ss.Resolve(n)
+		for k, v := range props {
+			if _, exists := n.Attrs[k]; !exists {
+				n.Attrs[k] = v
+			}
+		}
+	}
 }
 
 // Resolve returns the merged properties for a node, with higher-specificity rules winning.

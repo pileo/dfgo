@@ -48,6 +48,25 @@ digraph pipeline {
 
 The `fidelity_valid` lint rule checks that any `fidelity` attribute on nodes, edges, or the graph is a recognized mode. Invalid values produce a warning during pipeline validation.
 
+## Preamble Generation
+
+Before each handler execution, the engine generates a context preamble based on the resolved fidelity mode and stores it in the `internal.preamble` context key. Handlers can read this key to include appropriate context carryover in their LLM prompts.
+
+```go
+preamble := fidelity.GeneratePreamble(mode, runID, goal, visitLog)
+```
+
+| Mode | Preamble content |
+|---|---|
+| `truncate` | Run ID + goal only |
+| `compact` | Run ID + goal + bullet-point summary of completed stages with outcomes |
+| `summary:low` | Proportional detail (~600 token budget) |
+| `summary:medium` | Proportional detail (~1500 token budget) |
+| `summary:high` | Proportional detail (~3000 token budget) |
+| `full` | Empty (no preamble — full session context assumed) |
+
+Summary modes approximate token budgets at ~4 characters per token and truncate stage history to fit.
+
 ## Integration
 
-The engine checks if a handler implements `FidelityAwareHandler`. If so, it calls `SetFidelity(mode)` before `Execute()`. Currently no built-in handlers implement this interface — it's a hook for LLM backend implementations to use.
+The engine checks if a handler implements `FidelityAwareHandler`. If so, it calls `SetFidelity(mode)` before `Execute()`. The engine also generates a fidelity-appropriate preamble and sets it as the `internal.preamble` context key before handler execution.

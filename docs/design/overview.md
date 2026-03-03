@@ -31,13 +31,13 @@ Parse → Validate → Initialize → Execute → Finalize
 
 1. **Parse**: DOT source → `model.Graph` via hand-rolled lexer/parser
 2. **Validate**: 13 lint rules check structural correctness (start/exit node constraints, edge targets, condition syntax, stylesheet syntax, fidelity modes, retry targets, known types, etc.)
-3. **Initialize**: Generate run ID, create run directory, load checkpoint if resuming, seed pipeline context
-4. **Execute**: Loop through nodes — for each node: look up handler, execute it, apply context updates, select next edge, advance. Handles retries and goal gates.
-5. **Finalize**: Write final checkpoint and manifest
+3. **Initialize**: Generate run ID, create run directory, create event emitter + artifact store, load checkpoint if resuming, seed pipeline context
+4. **Execute**: Loop through nodes — for each node: emit events, generate fidelity preamble, execute handler, write status.json, apply context updates, select next edge, advance. Handles retries and goal gates.
+5. **Finalize**: Write final checkpoint, emit completion event, update manifest
 
 ### Key Design Decisions
 
-1. **`map[string]string` attributes everywhere** — nodes, edges, and graph-level attributes are all string maps. Type coercion (`IntAttr`, `BoolAttr`, `FloatAttr`) happens lazily at point of use. This matches DOT's string-native format and keeps the model simple.
+1. **`map[string]string` attributes everywhere** — nodes, edges, and graph-level attributes are all string maps. Type coercion (`IntAttr`, `BoolAttr`, `FloatAttr`, `DurationAttr`) happens lazily at point of use. This matches DOT's string-native format and keeps the model simple.
 
 2. **`Order` field on Node and Edge** — preserves DOT declaration order for deterministic traversal and reproducible test output.
 
@@ -67,7 +67,9 @@ cmd/dfgo (cobra root + run subcommand)
   │    │    ├─ fidelity
   │    │    ├─ agent ←────────── coding_agent handler
   │    │    └─ llm ←──────────── LLMCodergenBackend
-  │    ├─ style (stylesheet)
+  │    ├─ style (stylesheet with class support + Apply transform)
+  │    ├─ events (pipeline observability events + emitter)
+  │    ├─ artifact (artifact store: in-memory + file-backed)
   │    ├─ transform (variable expansion)
   │    └─ rundir (run directory, manifest)
   ├─ llm (unified LLM client)
@@ -91,6 +93,6 @@ All packages under `internal/` — not importable by external code.
 |---|---|---|
 | `github.com/google/uuid` | engine | Generate unique run IDs |
 | `github.com/spf13/cobra` | CLI | Subcommand and flag parsing |
-| `golang.org/x/sync/errgroup` | (reserved) | Parallel handler goroutine management (not yet wired) |
+| `golang.org/x/sync/errgroup` | (reserved) | Available for future use (parallel handler uses `sync.WaitGroup` + channel semaphore) |
 
 Everything else is Go stdlib: `log/slog`, `encoding/json`, `os/exec`, `sync`, `context`, `regexp`, `strconv`, `time`.

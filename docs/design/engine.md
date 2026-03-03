@@ -13,8 +13,10 @@ type EngineConfig struct {
     ResumeRunID     string                // resume a previous run
     InitialContext  map[string]string     // seed context
     CodergenBackend handler.CodergenBackend
+    AgentSessionFactory handler.AgentSessionFactory
     Interviewer     interviewer.Interviewer
     AutoApprove     bool                  // use AutoApprove interviewer
+    Artifacts       *artifact.Store       // nil = auto-created from run dir
 }
 ```
 
@@ -35,6 +37,10 @@ Feeds DOT source to the hand-rolled parser. Produces an immutable `model.Graph`.
 
 Fails on: malformed DOT syntax, unterminated strings, unexpected tokens.
 
+### Stylesheet Transform
+
+After parsing but before validation, the engine applies the model stylesheet if the graph has a `model_stylesheet` attribute. The stylesheet is parsed via `style.ParseStylesheet()` and applied via `ss.Apply(g)`, which sets properties on nodes only when they don't already have an explicit value for that attribute. This ensures explicit node attributes always take priority over stylesheet defaults.
+
 ## Phase 2: Validate
 
 Runs all lint rules against the graph. Logs warnings, aborts on errors. The engine passes the handler registry's known types to the validation runner so the `type_known` rule can flag unrecognized node types.
@@ -45,15 +51,18 @@ Fails on: missing start/exit nodes, incoming edges on start node, outgoing edges
 
 1. Generates a UUID run ID (or uses `ResumeRunID`)
 2. Creates the run directory (`{logsDir}/{runID}/` with `artifacts/` subdirectory)
-3. Seeds pipeline context from graph `goal` attribute (also sets `graph.goal`) and `InitialContext`
-4. Writes initial `manifest.json`
-5. If resuming: loads checkpoint, restores context/retry counters/completed set
+3. Creates the event emitter (buffered channel, capacity 256)
+4. Creates the artifact store (from config, or auto-created from run directory)
+5. Seeds pipeline context from graph `goal` attribute (also sets `graph.goal`) and `InitialContext`
+6. Writes initial `manifest.json`
+7. If resuming: loads checkpoint, restores context (including logs)/retry counters/completed set
 
 ## Phase 4: Execute
 
 The main loop:
 
 ```
+emit PipelineStarted event
 currentNode = startNode (or checkpoint.CurrentNode if resuming)
 
 loop:
@@ -62,8 +71,12 @@ loop:
         break
 
     set context["current_node"] = currentNode
+    emit StageStarted event
     handler = registry.Lookup(currentNode)
+    resolve fidelity mode, generate preamble, set context["internal.preamble"]
     outcome = handler.Execute(...)
+    emit StageCompleted or StageFailed event
+    write status.json to node log directory
     merge outcome.ContextUpdates into context
     set context["outcome"] = outcome.Status
     set context["preferred_label"] = outcome.PreferredLabel (if non-empty)
@@ -71,6 +84,7 @@ loop:
 
     if RETRY and retries remaining:
         increment counter, set context["internal.retry_count.<id>"]
+        emit StageRetrying event
         checkpoint, apply backoff delay (retry_policy), continue
     if RETRY and retries exhausted:
         if allow_partial → PARTIAL_SUCCESS
@@ -84,7 +98,7 @@ loop:
     nextEdge = edge.Select(graph, currentNode, outcome, context)
     if no matching edge and outcome is failure:
         resolve retry_target chain → jump to target if found
-    checkpoint(nextEdge.To)
+    checkpoint(nextEdge.To)  // emits CheckpointSaved event
     currentNode = nextEdge.To
 ```
 
@@ -125,7 +139,9 @@ The loop checks `ctx.Done()` on every iteration and during backoff delays. A can
 ## Phase 5: Finalize
 
 1. Saves final checkpoint (with empty `CurrentNode`)
-2. Updates `manifest.json` with `status: "completed"`
+2. Emits `PipelineCompleted` event (or `PipelineFailed` if execute returned error)
+3. Closes the event emitter (drains pending events)
+4. Updates `manifest.json` with `status: "completed"`
 
 ## Run Directory Layout
 
@@ -133,8 +149,10 @@ The loop checks `ctx.Done()` on every iteration and during backoff delays. A can
 {logsDir}/{runID}/
     manifest.json          # run metadata
     checkpoint.json        # execution state for resumption
-    artifacts/             # pipeline-level artifacts
+    artifacts/             # pipeline-level artifacts (managed by artifact.Store)
+        {id}.dat           # file-backed artifacts (≥100KB)
     {node_id}/             # per-node directory (created on demand)
+        status.json        # node execution outcome (written after each handler)
         prompt.txt         # codergen prompt (if applicable)
         response.txt       # codergen response (if applicable)
 ```

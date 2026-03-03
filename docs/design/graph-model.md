@@ -61,6 +61,7 @@ Nodes are identified by their DOT ID (e.g., `start`, `do_work`). All properties 
 | `retry_policy` | Backoff preset name | `"standard"`, `"none"`, `"patient"` |
 | `retry_target` | Node to jump to on failure/retry | `"setup_step"` |
 | `fallback_retry_target` | Fallback retry target | `"init_step"` |
+| `class` | Comma-separated class list for stylesheet matching | `"agent, worker"` |
 
 ### Edge
 
@@ -88,16 +89,18 @@ Rather than storing typed fields, `Graph`, `Node`, and `Edge` all provide access
 
 ```go
 // Graph-level
-g.IntAttr("default_max_retry", 50)  // returns int, or default if missing/unparseable
-g.BoolAttr("verbose", false)        // returns bool
-g.StringAttr("goal", "")            // returns string
-g.FloatAttr("threshold", 0.5)       // returns float64
+g.IntAttr("default_max_retry", 50)           // returns int, or default if missing/unparseable
+g.BoolAttr("verbose", false)                 // returns bool
+g.StringAttr("goal", "")                     // returns string
+g.FloatAttr("threshold", 0.5)               // returns float64
+g.DurationAttr("timeout", 30*time.Second)    // returns time.Duration
 
 // Node-level
 node.IntAttr("max_retries", 0)
 node.BoolAttr("goal_gate", false)
 node.StringAttr("prompt", "")
 node.FloatAttr("weight", 1.0)
+node.DurationAttr("timeout", time.Minute)    // parses "900s", "15m", "2h", "250ms", "1d"
 
 // Edge-level
 edge.IntAttr("weight", 0)
@@ -106,6 +109,10 @@ edge.StringAttr("label", "")
 ```
 
 This keeps the model aligned with DOT's string-native format. Invalid values silently fall back to the default — no parse errors at the model layer.
+
+### Duration Parsing
+
+`DurationAttr` uses `model.ParseDuration()`, which extends Go's `time.ParseDuration` with support for `"d"` suffix (days, converted to hours). Examples: `"45s"`, `"15m"`, `"2h"`, `"250ms"`, `"1d"` (= 24h), `"7d"` (= 168h).
 
 ## Node Merging
 

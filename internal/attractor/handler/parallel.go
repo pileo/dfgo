@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -18,6 +19,15 @@ const (
 	JoinKOfN         JoinPolicy = "k_of_n"
 	JoinFirstSuccess JoinPolicy = "first_success"
 	JoinQuorum       JoinPolicy = "quorum"
+)
+
+// ErrorPolicy determines how parallel branches handle failures.
+type ErrorPolicy string
+
+const (
+	ErrorPolicyContinue ErrorPolicy = "continue"  // default: run all branches regardless
+	ErrorPolicyFailFast ErrorPolicy = "fail_fast"  // cancel remaining on first failure
+	ErrorPolicyIgnore   ErrorPolicy = "ignore"     // filter out failures from join evaluation
 )
 
 // ParallelHandler fans out to child nodes and joins results.
@@ -39,6 +49,11 @@ func (h *ParallelHandler) Execute(ctx context.Context, node *model.Node, pctx *r
 	}
 
 	policy := JoinPolicy(node.StringAttr("join", string(JoinWaitAll)))
+	errPolicy := ErrorPolicy(node.StringAttr("error_policy", string(ErrorPolicyContinue)))
+	maxParallel := node.IntAttr("max_parallel", 4)
+	if maxParallel < 1 {
+		maxParallel = 1
+	}
 
 	if h.ChildExecutor == nil {
 		// Stub mode: just succeed
@@ -55,14 +70,44 @@ func (h *ParallelHandler) Execute(ctx context.Context, node *model.Node, pctx *r
 	}
 
 	results := make([]result, len(children))
-	var wg sync.WaitGroup
 
+	// Use a derived context for fail_fast cancellation.
+	execCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Semaphore to limit concurrency.
+	sem := make(chan struct{}, maxParallel)
+
+	var wg sync.WaitGroup
 	for i, childID := range children {
 		wg.Add(1)
 		go func(i int, id string) {
 			defer wg.Done()
-			o, err := h.ChildExecutor(ctx, id)
+
+			// Acquire semaphore slot.
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-execCtx.Done():
+				results[i] = result{nodeID: id, outcome: runtime.FailOutcome("canceled", runtime.FailureCanceled), err: execCtx.Err()}
+				return
+			}
+
+			// Check for cancellation before executing.
+			if execCtx.Err() != nil {
+				results[i] = result{nodeID: id, outcome: runtime.FailOutcome("canceled", runtime.FailureCanceled), err: execCtx.Err()}
+				return
+			}
+
+			o, err := h.ChildExecutor(execCtx, id)
 			results[i] = result{nodeID: id, outcome: o, err: err}
+
+			// For fail_fast: cancel remaining branches on first failure.
+			if errPolicy == ErrorPolicyFailFast {
+				if err != nil || !o.IsSuccess() {
+					cancel()
+				}
+			}
 		}(i, childID)
 	}
 	wg.Wait()
@@ -76,8 +121,34 @@ func (h *ParallelHandler) Execute(ctx context.Context, node *model.Node, pctx *r
 		}
 	}
 
+	// Store results in context as JSON for fan-in consumption.
+	storeParallelResults(pctx, outcomes)
+
+	// For ignore policy, filter out failures before join evaluation.
+	if errPolicy == ErrorPolicyIgnore {
+		for id, o := range outcomes {
+			if !o.IsSuccess() || errs[id] != nil {
+				delete(outcomes, id)
+				delete(errs, id)
+			}
+		}
+		// If all were filtered out, that's a failure.
+		if len(outcomes) == 0 {
+			return runtime.FailOutcome("all branches failed (error_policy=ignore)", runtime.FailureTransient), nil
+		}
+	}
+
 	k := node.IntAttr("k", 0)
 	return joinParallelResults(outcomes, errs, policy, k), nil
+}
+
+// storeParallelResults writes outcomes to context as JSON for fan-in.
+func storeParallelResults(pctx *runtime.Context, outcomes map[string]runtime.Outcome) {
+	data, err := json.Marshal(outcomes)
+	if err != nil {
+		return
+	}
+	pctx.Set("parallel.results", string(data))
 }
 
 func joinParallelResults(outcomes map[string]runtime.Outcome, errors map[string]error, policy JoinPolicy, k int) runtime.Outcome {

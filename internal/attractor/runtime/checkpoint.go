@@ -14,6 +14,7 @@ type Checkpoint struct {
 	Completed     []string          `json:"completed"`
 	RetryCounters map[string]int    `json:"retry_counters"`
 	Context       map[string]string `json:"context"`
+	Logs          []string          `json:"logs,omitempty"`
 	VisitLog      []VisitEntry      `json:"visit_log"`
 }
 

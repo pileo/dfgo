@@ -135,42 +135,42 @@ Also fix `reachability` severity from WARNING to ERROR per spec. — **COMPLETED
 
 ---
 
-## Phase 3: Handler Completions
+## Phase 3: Handler Completions — COMPLETED
 
-### 3.1 Fan-in handler — heuristic ranking
+### 3.1 Fan-in handler — heuristic ranking — COMPLETED
 
 **File:** `internal/attractor/handler/fan_in.go`
 
-Replace the no-op with spec algorithm:
-1. Read `parallel.results` from context (JSON map of nodeID -> outcome)
+Implemented spec algorithm:
+1. Reads `parallel.results` from context (JSON map of nodeID -> outcome)
 2. Heuristic ranking: sort by status priority (SUCCESS=0, PARTIAL_SUCCESS=1, RETRY=2, FAIL=3), then by id ascending
-3. Write `parallel.fan_in.best_id` and `parallel.fan_in.best_outcome` to context
-4. Return SUCCESS (or FAIL if all candidates failed)
+3. Writes `parallel.fan_in.best_id` and `parallel.fan_in.best_outcome` to context
+4. Returns SUCCESS (or FAIL if all candidates failed)
 
-No LLM evaluation for now — add that as a later enhancement when the codergen backend is used more broadly.
+Tests: 5 test functions (no results, ranking, all-failed, tiebreak-by-ID, invalid JSON).
 
-### 3.2 Parallel handler — `error_policy` and `max_parallel`
+### 3.2 Parallel handler — `error_policy` and `max_parallel` — COMPLETED
 
 **File:** `internal/attractor/handler/parallel.go`
 
-- Add `error_policy` attr reading: `"continue"` (default, current behavior), `"fail_fast"`, `"ignore"`
-  - `fail_fast`: Use context cancellation — cancel remaining goroutines on first failure
-  - `ignore`: Filter out failures from join evaluation
-- Add `max_parallel` attr (default 4): Use a semaphore (`make(chan struct{}, maxParallel)`) to limit concurrent goroutines
-- Store branch results in context as `parallel.results` (JSON) for fan-in to consume
+Implemented:
+- `error_policy` attr: `"continue"` (default), `"fail_fast"` (context cancellation), `"ignore"` (filter failures from join)
+- `max_parallel` attr (default 4): channel-based semaphore limiting concurrent goroutines
+- Stores branch results in context as `parallel.results` (JSON) for fan-in consumption
 
-### 3.3 Manager loop handler — supervision loop
+Tests: 5 test functions (stores results, max_parallel concurrency, fail_fast, ignore, ignore-all-fail).
+
+### 3.3 Manager loop handler — supervision loop — COMPLETED
 
 **File:** `internal/attractor/handler/manager_loop.go`
 
-Expand from skeleton to spec algorithm:
-- Read attrs: `manager.poll_interval` (parse as duration, default "45s"), `manager.max_cycles` (default 1000), `manager.stop_condition`, `manager.actions` (default "observe,wait")
-- Read `stack.child_dotfile` from graph attrs
-- Implement observation loop:
-  1. If "observe" in actions: read child status from context (`context.stack.child.status`)
-  2. Check stop conditions: child status completed/failed, or custom stop_condition expression via `cond.Eval`
-  3. If "wait" in actions: `time.Sleep(pollInterval)` with ctx cancellation
-- Return SUCCESS on child completion, FAIL on max_cycles or child failure
+Implemented full supervision loop:
+- Reads `manager.poll_interval` (duration parsing incl. "d" suffix, default "45s"), `manager.max_cycles` (default 1000), `manager.stop_condition`, `manager.actions` (default "observe,wait")
+- Observation loop: checks `stack.child.status` context key, evaluates custom stop_condition via `cond.Eval`
+- Wait action: `time.After(pollInterval)` with ctx cancellation via `select`
+- Returns SUCCESS on child completion/stop condition, FAIL on max_cycles or child failure
+
+Tests: 7 test functions (max cycles, stop condition, child status, child fail, cancellation, observe-only, invalid stop condition) + `TestParseDuration` (8 subtests).
 
 ### 3.4 Tool handler — `tool_command` attr name — COMPLETED
 
@@ -185,115 +185,73 @@ cmdStr := node.StringAttr("tool_command", node.StringAttr("command", ""))
 
 ---
 
-## Phase 4: Engine Features
+## Phase 4: Engine Features — COMPLETED
 
-### 4.1 Stylesheet application transform
+### 4.1 Stylesheet application transform — COMPLETED
 
-**File:** `internal/attractor/engine.go` (initialize phase)
+**Files modified:**
+- `internal/attractor/engine.go` — Added `applyStylesheet()` method called between parse and validate
+- `internal/attractor/style/stylesheet.go` — Added `Apply(g)` method, extended `Matches()` to check `n.Attrs["class"]` (comma-split)
 
-Wire the stylesheet as a transform that runs after parsing, before validation:
-1. Read `g.Attrs["model_stylesheet"]`
-2. Parse via `style.ParseStylesheet()`
-3. For each node, call `ss.Resolve(n)` and set unset attributes (stylesheet doesn't override explicit attrs)
-4. Add `class` attr support to stylesheet Selector.Matches — parse `n.Attrs["class"]` as comma-separated list
+Tests: 3 new test functions in stylesheet_test.go (class matching, Apply, no-override-explicit)
 
-**Changes to `internal/attractor/style/stylesheet.go`:**
-- Extend `Matches()` to check `n.Attrs["class"]` (comma-split) in addition to `n.Attrs["shape"]`
+### 4.2 Per-node status.json — COMPLETED
 
-### 4.2 Per-node status.json
+**File modified:** `internal/attractor/engine.go`
 
-**File:** `internal/attractor/engine.go` (after handler execution)
+Added `writeNodeStatus()` method and `nodeStatus` struct. Called after every non-terminal node execution. Writes JSON with outcome, preferred_next_label, suggested_next_ids, context_updates, notes.
 
-After each non-terminal node executes, write `status.json` to the node's log directory:
-```json
-{
-  "outcome": "SUCCESS",
-  "preferred_next_label": "",
-  "suggested_next_ids": [],
-  "context_updates": {},
-  "notes": ""
-}
-```
-Populated from the `runtime.Outcome`. If node has `auto_status=true` and handler wrote no status, synthesize a success status.
+Tests: `TestNodeStatusJSON` in engine_test.go
 
-### 4.3 Observability events
+### 4.3 Observability events — COMPLETED
 
-**New file:** `internal/attractor/events/events.go`
+**Files created:**
+- `internal/attractor/events/events.go` — 15 event types, Event struct, Emitter (buffered channel pattern from agent/event)
 
-Define event types matching the spec:
-```go
-type EventType string
-const (
-    PipelineStarted, PipelineCompleted, PipelineFailed EventType
-    StageStarted, StageCompleted, StageFailed, StageRetrying EventType
-    ParallelStarted, ParallelBranchStarted, ParallelBranchCompleted, ParallelCompleted EventType
-    InterviewStarted, InterviewCompleted, InterviewTimeout EventType
-    CheckpointSaved EventType
-)
-```
+**Files modified:**
+- `internal/attractor/engine.go` — Events field on Engine, emits PipelineStarted/Completed/Failed, StageStarted/Completed/Failed/Retrying, CheckpointSaved
 
-Add an `EventEmitter` to the Engine (reuse the pattern from `internal/agent/event/`). Emit events at the appropriate points in the engine lifecycle. Wire the emitter through to handlers that need it (parallel, wait_human).
+Tests: 6 test functions in events_test.go + `TestEventsEmitted` in engine_test.go
 
-### 4.4 Context logs (append-only)
+### 4.4 Context logs (append-only) — COMPLETED
 
-**File:** `internal/attractor/runtime/context.go`
+**Files modified:**
+- `internal/attractor/runtime/context.go` — Added `logs []string` field, `AppendLog()`, `Logs()` methods; updated `Clone()` to include logs
+- `internal/attractor/runtime/checkpoint.go` — Added `Logs []string` field to Checkpoint
+- `internal/attractor/engine.go` — Checkpoint save/resume includes logs
 
-Add an append-only log list to Context:
-```go
-type Context struct {
-    mu   sync.RWMutex
-    data map[string]string
-    logs []string
-}
-func (c *Context) AppendLog(entry string) { ... }
-func (c *Context) Logs() []string { ... }
-```
+Tests: 3 test functions in context_log_test.go + 2 in checkpoint_test.go + `TestContextLogs` in engine_test.go
 
-Include logs in checkpoint serialization.
+### 4.5 Artifact store — COMPLETED
 
-### 4.5 Artifact store
+**Files created:**
+- `internal/attractor/artifact/store.go` — Store with NewStore, Store/Retrieve/Has/List/Remove/Clear. 100KB file-backing threshold.
 
-**New file:** `internal/attractor/artifact/store.go`
+**Files modified:**
+- `internal/attractor/attractor.go` — Added `Artifacts *artifact.Store` to EngineConfig
+- `internal/attractor/engine.go` — Added `Artifacts` field, auto-created in initialize from RunDir artifacts dir
 
-Implement the spec interface:
-```go
-type ArtifactInfo struct { ID, Name string; SizeBytes int; StoredAt time.Time; IsFileBacked bool }
-type Store struct { ... }
-func NewStore(baseDir string) *Store
-func (s *Store) Store(id, name string, data []byte) (ArtifactInfo, error)
-func (s *Store) Retrieve(id string) ([]byte, error)
-func (s *Store) Has(id string) bool
-func (s *Store) List() []ArtifactInfo
-func (s *Store) Remove(id string)
-func (s *Store) Clear()
-```
+Tests: 9 test functions in store_test.go + `TestArtifactStoreAvailable` in engine_test.go
 
-File-backing threshold: 100KB. Below = in-memory map, above = disk at `{baseDir}/artifacts/{id}.json`. Wire into Engine and expose via EngineConfig.
+### 4.6 Fidelity runtime behavior — COMPLETED
 
-### 4.6 Fidelity runtime behavior
+**Files created:**
+- `internal/attractor/fidelity/preamble.go` — `GeneratePreamble()` with mode-specific summaries: truncate (goal+runID), compact (bullet summary), summary:lo/med/hi (token-budgeted), full (empty)
 
-**File:** `internal/attractor/engine.go` (executeNode)
+**Files modified:**
+- `internal/attractor/engine.go` — `executeNode()` now generates preamble and sets `internal.preamble` context key
 
-Currently fidelity is resolved but nothing happens with it besides calling `SetFidelity`. Implement the preamble/context carryover:
+Tests: 6 test functions in preamble_test.go + `TestPreambleSetInContext` in engine_test.go
 
-- Add a `PreambleTransform` that generates context summaries based on fidelity mode
-- For `truncate`: only goal + run ID
-- For `compact`: bullet-point summary of completed stages + outcomes
-- For `summary:*`: proportional detail based on token budget (~600/1500/3000 tokens)
-- For `full`: no preamble needed (session reuse — defer full thread_id support to later)
-- Pass the preamble into the handler via a new context key `internal.preamble`
+### 4.7 Duration value type parsing — COMPLETED
 
-### 4.7 Duration value type parsing
+**Files created:**
+- `internal/attractor/model/duration.go` — `ParseDuration()` function, `DurationAttr()` on Node and Graph
 
-**New file:** `internal/attractor/model/duration.go`
+**Files modified:**
+- `internal/attractor/handler/manager_loop.go` — Updated to use `node.DurationAttr()` instead of local `parseDuration()`; local wrapper now delegates to `model.ParseDuration()`
 
-Add `DurationAttr(key string, def time.Duration) time.Duration` to Node:
-```go
-// Parses "900s", "15m", "2h", "250ms", "1d"
-func parseDuration(s string) (time.Duration, error)
-```
-
-Used by manager_loop (`poll_interval`) and tool handler (`timeout` could accept duration strings).
+Tests: 3 test functions in duration_test.go (ParseDuration with 10 subtests, NodeDurationAttr, GraphDurationAttr)
 
 ---
 
@@ -467,8 +425,8 @@ go test ./...
 
 - **Phase 1:** ~~Add tests for retry backoff (verify delays), goal gate chain resolution, failure routing, truncation order fix.~~ DONE (30+ new tests, all passing, 77.5% coverage)
 - **Phase 2:** ~~Add test cases for each new validation rule.~~ DONE (6 new test functions, 14 test cases, all passing). Also added `TestParseStylesheetErrors` in style package.
-- **Phase 3:** Add tests for fan-in ranking, parallel error_policy/max_parallel, manager loop cycles. Run `go test ./internal/attractor/handler/...`
-- **Phase 4:** Add tests for stylesheet application, status.json writing, artifact store CRUD, preamble generation. Run `go test ./internal/attractor/...`
+- **Phase 3:** ~~Add tests for fan-in ranking, parallel error_policy/max_parallel, manager loop cycles.~~ DONE (18 new tests, all passing). Run `go test ./internal/attractor/handler/...`
+- **Phase 4:** ~~Add tests for stylesheet application, status.json writing, artifact store CRUD, preamble generation.~~ DONE (40+ new tests across 8 files, all passing). Run `go test ./internal/attractor/...`
 - **Phase 5:** Add tests for env context block, project doc discovery, subagent tools, follow-up queue. Run `go test ./internal/agent/...`
 - **Phase 6:** ~~Streaming tests~~ DONE (33 tests). Remaining: FromEnv, cache injection. Run `go test ./internal/llm/...`
 
