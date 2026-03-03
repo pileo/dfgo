@@ -365,30 +365,22 @@ Wire through in session.go.
 
 ## Phase 6: LLM Client Features
 
-### 6.1 `Client.FromEnv()`
+### 6.1 `Client.FromEnv()` — COMPLETED
 
-**File:** `internal/llm/client.go`
+> Implemented as `clientFromEnv()` in `cmd/dfgo/main.go` rather than in `internal/llm/client.go`, because `llm` cannot import `provider` (circular dependency). The CLI is the natural wiring point. The `ConfigurationError` type was added to `internal/llm/errors.go` as planned.
 
-```go
-func FromEnv() (*Client, error) {
-    var opts []ClientOption
-    if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-        opts = append(opts, WithProvider(provider.NewAnthropic()))
-    }
-    if key := os.Getenv("OPENAI_API_KEY"); key != "" {
-        opts = append(opts, WithProvider(provider.NewOpenAI()))
-    }
-    if key := os.Getenv("GEMINI_API_KEY"); key != "" {
-        opts = append(opts, WithProvider(provider.NewGemini()))
-    }
-    if len(opts) == 0 {
-        return nil, &ConfigurationError{...}
-    }
-    return NewClient(opts...), nil
-}
+**Files modified:**
+- `internal/llm/errors.go` — Added `ConfigurationError` type
+- `cmd/dfgo/main.go` — Added `clientFromEnv(verbose)` that auto-discovers `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`; creates provider adapters; attaches retry + logging middleware. Wires `DefaultAgentSessionFactory(client, env)` into `EngineConfig`. Graceful fallback: if no keys set, coding_agent nodes use the stub handler.
+- `internal/attractor/handler/coding_agent.go` — `DefaultAgentSessionFactory` now reads `stream` node attribute into `Config.Streaming`
+
+The full end-to-end path is now functional:
 ```
-
-Add `ConfigurationError` type to errors.go.
+dfgo run pipeline.dot  (with ANTHROPIC_API_KEY set)
+  → clientFromEnv() → Client with Anthropic + retry + logging
+  → DefaultAgentSessionFactory(client, env) → EngineConfig
+  → coding_agent node → agent.Session.Run() → real LLM calls
+```
 
 ### 6.2 Streaming support — COMPLETED
 

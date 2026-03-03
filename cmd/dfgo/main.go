@@ -8,9 +8,14 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 
+	"dfgo/internal/agent/execenv"
 	"dfgo/internal/attractor"
+	"dfgo/internal/attractor/handler"
 	"dfgo/internal/attractor/interviewer"
+	"dfgo/internal/llm"
+	"dfgo/internal/llm/provider"
 )
 
 func main() {
@@ -68,5 +73,44 @@ func run() error {
 		Interviewer: iv,
 	}
 
+	// Create LLM client from environment if any API keys are present.
+	// This enables coding_agent pipeline nodes to call real LLMs.
+	if client, err := clientFromEnv(verbose); err == nil {
+		workDir, _ := filepath.Abs(".")
+		env := execenv.NewLocal(workDir)
+		cfg.AgentSessionFactory = handler.DefaultAgentSessionFactory(client, env)
+		defer client.Close()
+	}
+
 	return attractor.RunPipeline(ctx, string(dotSource), cfg)
+}
+
+// clientFromEnv creates an LLM client from available API key environment variables.
+// Returns an error if no API keys are found.
+func clientFromEnv(verbose bool) (*llm.Client, error) {
+	var opts []llm.ClientOption
+
+	if os.Getenv("ANTHROPIC_API_KEY") != "" {
+		opts = append(opts, llm.WithProvider(provider.NewAnthropic()))
+	}
+	if os.Getenv("OPENAI_API_KEY") != "" {
+		opts = append(opts, llm.WithProvider(provider.NewOpenAI()))
+	}
+	if os.Getenv("GEMINI_API_KEY") != "" {
+		opts = append(opts, llm.WithProvider(provider.NewGemini()))
+	}
+
+	if len(opts) == 0 {
+		return nil, &llm.ConfigurationError{SDKError: llm.SDKError{
+			Message: "no LLM API keys found (set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY)",
+		}}
+	}
+
+	// Add standard middleware.
+	opts = append(opts, llm.WithRetry(llm.DefaultRetryPolicy()))
+	if verbose {
+		opts = append(opts, llm.WithLogging(slog.Default()))
+	}
+
+	return llm.NewClient(opts...), nil
 }

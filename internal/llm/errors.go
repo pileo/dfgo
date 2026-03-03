@@ -59,6 +59,9 @@ type AbortError struct{ SDKError }
 // NetworkError indicates a network-level failure.
 type NetworkError struct{ SDKError }
 
+// ConfigurationError indicates a client configuration problem (e.g., no API keys found).
+type ConfigurationError struct{ SDKError }
+
 // IsRetryable checks the error chain for retryable errors.
 func IsRetryable(err error) bool {
 	if err == nil {
