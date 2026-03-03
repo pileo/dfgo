@@ -44,6 +44,10 @@ digraph pipeline {
 - Node B via edge from A: `truncate` (edge-level)
 - Node B via any other edge: `compact` (graph-level)
 
+## Validation
+
+The `fidelity_valid` lint rule checks that any `fidelity` attribute on nodes, edges, or the graph is a recognized mode. Invalid values produce a warning during pipeline validation.
+
 ## Integration
 
 The engine checks if a handler implements `FidelityAwareHandler`. If so, it calls `SetFidelity(mode)` before `Execute()`. Currently no built-in handlers implement this interface — it's a hook for LLM backend implementations to use.

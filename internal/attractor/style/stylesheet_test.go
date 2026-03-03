@@ -59,7 +59,10 @@ func TestParseStylesheet(t *testing.T) {
     reasoning_effort: high;
 }
 `
-	ss := ParseStylesheet(src)
+	ss, err := ParseStylesheet(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(ss.Rules) != 3 {
 		t.Fatalf("expected 3 rules, got %d", len(ss.Rules))
 	}
@@ -68,6 +71,24 @@ func TestParseStylesheet(t *testing.T) {
 	}
 	if ss.Rules[1].Properties["llm_model"] != "claude-3" {
 		t.Fatal("expected llm_model=claude-3 for .box")
+	}
+}
+
+func TestParseStylesheetErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{"unclosed brace", `* { llm_model: gpt-4;`},
+		{"empty selector", `{ llm_model: gpt-4; }`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseStylesheet(tt.src)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+		})
 	}
 }
 
@@ -84,7 +105,10 @@ func TestResolve(t *testing.T) {
     reasoning_effort: high;
 }
 `
-	ss := ParseStylesheet(src)
+	ss, err := ParseStylesheet(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	// Generic box node
 	n := &model.Node{ID: "generic", Attrs: map[string]string{"shape": "box"}}

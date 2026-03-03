@@ -61,6 +61,17 @@ r.RegisterType("my_custom_type", &MyHandler{})
 r.RegisterShape("star", &StarHandler{})
 ```
 
+### Introspection
+
+The registry exposes its registered keys for use by validation and tooling:
+
+```go
+registry.KnownTypes()  // []string{"codergen", "tool", "parallel", ...}
+registry.KnownShapes() // []string{"Mdiamond", "Msquare", "diamond"}
+```
+
+The engine passes `KnownTypes()` to the validation runner so the `type_known` rule can warn about unrecognized node types.
+
 ## Built-in Handlers
 
 ### StartHandler

@@ -37,9 +37,9 @@ Fails on: malformed DOT syntax, unterminated strings, unexpected tokens.
 
 ## Phase 2: Validate
 
-Runs all lint rules against the graph. Logs warnings, aborts on errors.
+Runs all lint rules against the graph. Logs warnings, aborts on errors. The engine passes the handler registry's known types to the validation runner so the `type_known` rule can flag unrecognized node types.
 
-Fails on: missing start/exit nodes, dangling edge references, invalid condition syntax.
+Fails on: missing start/exit nodes, incoming edges on start node, outgoing edges on exit nodes, dangling edge references, invalid condition syntax, malformed stylesheets.
 
 ## Phase 3: Initialize
 

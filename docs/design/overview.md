@@ -30,7 +30,7 @@ Parse → Validate → Initialize → Execute → Finalize
 ```
 
 1. **Parse**: DOT source → `model.Graph` via hand-rolled lexer/parser
-2. **Validate**: Lint rules check structural correctness (start node exists, edges target real nodes, conditions parse, etc.)
+2. **Validate**: 13 lint rules check structural correctness (start/exit node constraints, edge targets, condition syntax, stylesheet syntax, fidelity modes, retry targets, known types, etc.)
 3. **Initialize**: Generate run ID, create run directory, load checkpoint if resuming, seed pipeline context
 4. **Execute**: Loop through nodes — for each node: look up handler, execute it, apply context updates, select next edge, advance. Handles retries and goal gates.
 5. **Finalize**: Write final checkpoint and manifest

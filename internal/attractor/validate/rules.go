@@ -4,20 +4,31 @@ import (
 	"fmt"
 
 	"dfgo/internal/attractor/cond"
+	"dfgo/internal/attractor/fidelity"
 	"dfgo/internal/attractor/model"
+	"dfgo/internal/attractor/style"
 )
 
 // BuiltinRules returns all built-in lint rules.
-func BuiltinRules() []LintRule {
-	return []LintRule{
+func BuiltinRules(cfg runnerConfig) []LintRule {
+	rules := []LintRule{
 		&startNodeRule{},
+		&startNoIncomingRule{},
 		&terminalNodeRule{},
+		&exitNoOutgoingRule{},
 		&reachabilityRule{},
 		&edgeTargetExistsRule{},
 		&conditionSyntaxRule{},
 		&goalGateRetryRule{},
 		&promptOnLLMRule{},
+		&stylesheetSyntaxRule{},
+		&fidelityValidRule{},
+		&retryTargetExistsRule{},
 	}
+	if len(cfg.knownTypes) > 0 {
+		rules = append(rules, &typeKnownRule{knownTypes: cfg.knownTypes})
+	}
+	return rules
 }
 
 // startNodeRule checks that exactly one Mdiamond start node exists.
@@ -172,6 +183,162 @@ func (r *promptOnLLMRule) Apply(g *model.Graph) []Diagnostic {
 					Severity: SeverityWarning,
 					NodeID:   n.ID,
 					Message:  fmt.Sprintf("node %q is type=codergen but has no prompt attribute", n.ID),
+				})
+			}
+		}
+	}
+	return diags
+}
+
+// startNoIncomingRule checks that the start node has no incoming edges.
+type startNoIncomingRule struct{}
+
+func (r *startNoIncomingRule) Name() string { return "start_no_incoming" }
+func (r *startNoIncomingRule) Apply(g *model.Graph) []Diagnostic {
+	start := g.StartNode()
+	if start == nil {
+		return nil // start_node rule will catch this
+	}
+	if in := g.InEdges(start.ID); len(in) > 0 {
+		return []Diagnostic{{
+			Rule:     r.Name(),
+			Severity: SeverityError,
+			NodeID:   start.ID,
+			Message:  fmt.Sprintf("start node %q has %d incoming edge(s)", start.ID, len(in)),
+		}}
+	}
+	return nil
+}
+
+// exitNoOutgoingRule checks that exit nodes have no outgoing edges.
+type exitNoOutgoingRule struct{}
+
+func (r *exitNoOutgoingRule) Name() string { return "exit_no_outgoing" }
+func (r *exitNoOutgoingRule) Apply(g *model.Graph) []Diagnostic {
+	var diags []Diagnostic
+	for _, n := range g.ExitNodes() {
+		if out := g.OutEdges(n.ID); len(out) > 0 {
+			diags = append(diags, Diagnostic{
+				Rule:     r.Name(),
+				Severity: SeverityError,
+				NodeID:   n.ID,
+				Message:  fmt.Sprintf("exit node %q has %d outgoing edge(s)", n.ID, len(out)),
+			})
+		}
+	}
+	return diags
+}
+
+// stylesheetSyntaxRule checks that the model_stylesheet graph attribute parses correctly.
+type stylesheetSyntaxRule struct{}
+
+func (r *stylesheetSyntaxRule) Name() string { return "stylesheet_syntax" }
+func (r *stylesheetSyntaxRule) Apply(g *model.Graph) []Diagnostic {
+	src := g.Attrs["model_stylesheet"]
+	if src == "" {
+		return nil
+	}
+	if _, err := style.ParseStylesheet(src); err != nil {
+		return []Diagnostic{{
+			Rule:     r.Name(),
+			Severity: SeverityError,
+			Message:  fmt.Sprintf("invalid model_stylesheet: %v", err),
+		}}
+	}
+	return nil
+}
+
+// typeKnownRule checks that node type attributes match known handler types.
+type typeKnownRule struct {
+	knownTypes []string
+}
+
+func (r *typeKnownRule) Name() string { return "type_known" }
+func (r *typeKnownRule) Apply(g *model.Graph) []Diagnostic {
+	known := make(map[string]bool, len(r.knownTypes))
+	for _, t := range r.knownTypes {
+		known[t] = true
+	}
+	var diags []Diagnostic
+	for _, n := range g.Nodes {
+		t := n.Attrs["type"]
+		if t == "" {
+			continue
+		}
+		if !known[t] {
+			diags = append(diags, Diagnostic{
+				Rule:     r.Name(),
+				Severity: SeverityWarning,
+				NodeID:   n.ID,
+				Message:  fmt.Sprintf("node %q has unknown type %q", n.ID, t),
+			})
+		}
+	}
+	return diags
+}
+
+// fidelityValidRule checks that fidelity attributes on nodes, edges, and the graph are valid modes.
+type fidelityValidRule struct{}
+
+func (r *fidelityValidRule) Name() string { return "fidelity_valid" }
+func (r *fidelityValidRule) Apply(g *model.Graph) []Diagnostic {
+	var diags []Diagnostic
+	// Check graph-level fidelity
+	if v, ok := g.Attrs["fidelity"]; ok {
+		if !fidelity.Mode(v).Valid() {
+			diags = append(diags, Diagnostic{
+				Rule:     r.Name(),
+				Severity: SeverityWarning,
+				Message:  fmt.Sprintf("graph has invalid fidelity mode %q", v),
+			})
+		}
+	}
+	// Check node-level fidelity
+	for _, n := range g.Nodes {
+		if v, ok := n.Attrs["fidelity"]; ok {
+			if !fidelity.Mode(v).Valid() {
+				diags = append(diags, Diagnostic{
+					Rule:     r.Name(),
+					Severity: SeverityWarning,
+					NodeID:   n.ID,
+					Message:  fmt.Sprintf("node %q has invalid fidelity mode %q", n.ID, v),
+				})
+			}
+		}
+	}
+	// Check edge-level fidelity
+	for _, e := range g.Edges {
+		if v, ok := e.Attrs["fidelity"]; ok {
+			if !fidelity.Mode(v).Valid() {
+				diags = append(diags, Diagnostic{
+					Rule:     r.Name(),
+					Severity: SeverityWarning,
+					Message:  fmt.Sprintf("edge %s->%s has invalid fidelity mode %q", e.From, e.To, v),
+				})
+			}
+		}
+	}
+	return diags
+}
+
+// retryTargetExistsRule checks that retry_target and fallback_retry_target point to existing nodes.
+type retryTargetExistsRule struct{}
+
+func (r *retryTargetExistsRule) Name() string { return "retry_target_exists" }
+func (r *retryTargetExistsRule) Apply(g *model.Graph) []Diagnostic {
+	var diags []Diagnostic
+	for _, n := range g.Nodes {
+		for _, attr := range []string{"retry_target", "fallback_retry_target"} {
+			target, ok := n.Attrs[attr]
+			if !ok || target == "" {
+				continue
+			}
+			if g.NodeByID(target) == nil {
+				diags = append(diags, Diagnostic{
+					Rule:     r.Name(),
+					Severity: SeverityWarning,
+					NodeID:   n.ID,
+					Message:  fmt.Sprintf("node %q has %s=%q but node %q does not exist", n.ID, attr, target, target),
 				})
 			}
 		}

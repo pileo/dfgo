@@ -30,6 +30,18 @@ if validate.HasErrors(diags) {
 }
 ```
 
+### Runner Options
+
+`NewRunner` accepts variadic options to configure rule behavior:
+
+```go
+runner := validate.NewRunner(
+    validate.WithKnownTypes(registry.KnownTypes()),  // enables type_known rule
+)
+```
+
+The engine automatically passes known types from the handler registry when validating.
+
 ## Built-in Rules
 
 ### `start_node` (error)
@@ -59,6 +71,30 @@ Nodes with `goal_gate="true"` should have a `max_retries` attribute, otherwise t
 ### `prompt_on_llm_nodes` (warning)
 
 Nodes with `type="codergen"` should have a `prompt` attribute. Without one, the codergen handler will return a deterministic failure.
+
+### `start_no_incoming` (error)
+
+The start node (`shape="Mdiamond"`) must have no incoming edges. Edges pointing to the start node indicate a structural error in the pipeline.
+
+### `exit_no_outgoing` (error)
+
+Exit nodes (`shape="Msquare"`) must have no outgoing edges. An exit node with outgoing edges is a structural error — the pipeline should terminate at exit nodes.
+
+### `stylesheet_syntax` (error)
+
+If the graph has a `model_stylesheet` attribute, parses it via `style.ParseStylesheet()` and reports structural errors (unclosed braces, empty selectors).
+
+### `type_known` (warning)
+
+Checks that each node's `type` attribute matches a registered handler type. Only active when `WithKnownTypes` is provided to the runner (the engine does this automatically). Nodes without a `type` attribute are not checked.
+
+### `fidelity_valid` (warning)
+
+Validates `fidelity` attributes on nodes, edges, and the graph itself against `fidelity.Mode.Valid()`. Recognized modes: `full`, `compact`, `summary:high`, `summary:medium`, `summary:low`, `truncate`.
+
+### `retry_target_exists` (warning)
+
+If a node has `retry_target` or `fallback_retry_target` attributes, checks that the referenced node ID exists in the graph.
 
 ## Adding Custom Rules
 

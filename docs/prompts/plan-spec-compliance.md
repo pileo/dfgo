@@ -109,24 +109,29 @@ Spec uses `suggested_next_ids: List<String>`, implementation has `SuggestedNextI
 
 ---
 
-## Phase 2: Missing Validation Rules
+## Phase 2: Missing Validation Rules — COMPLETED
 
-**Files:** `internal/attractor/validate/rules.go`, `internal/attractor/validate/validate.go`
+All 6 missing rules implemented and tested (14 test cases across 6 test functions, all passing).
 
-Add 6 missing rules to `BuiltinRules()`:
+**Files modified:**
+- `internal/attractor/validate/rules.go` — Added 6 new rule types to `BuiltinRules()`
+- `internal/attractor/validate/validate.go` — Added `RunnerOption` type, `WithKnownTypes()` option, variadic `NewRunner(opts...)`
+- `internal/attractor/validate/validate_test.go` — Added 6 new test functions
+- `internal/attractor/handler/handler.go` — Added `KnownTypes()` and `KnownShapes()` methods to Registry
+- `internal/attractor/style/stylesheet.go` — Changed `ParseStylesheet` to return `(Stylesheet, error)` for structural error detection
+- `internal/attractor/style/stylesheet_test.go` — Updated callers, added `TestParseStylesheetErrors`
+- `internal/attractor/engine.go` — Engine `validate()` now passes `WithKnownTypes(registry.KnownTypes())` to the runner
 
 | Rule | Severity | Implementation |
 |------|----------|----------------|
 | `start_no_incoming` | ERROR | `len(g.InEdges(start.ID)) == 0` |
 | `exit_no_outgoing` | ERROR | For each exit node, `len(g.OutEdges(n.ID)) == 0` |
-| `stylesheet_syntax` | ERROR | If `g.Attrs["model_stylesheet"] != ""`, call `style.ParseStylesheet()` and check for errors (need to make ParseStylesheet return error) |
-| `type_known` | WARNING | Check `n.Attrs["type"]` against a known set of types; pass registry to runner or use hardcoded list |
-| `fidelity_valid` | WARNING | If node/edge/graph has `fidelity` attr, check `fidelity.Mode(v).Valid()` |
+| `stylesheet_syntax` | ERROR | If `g.Attrs["model_stylesheet"] != ""`, call `style.ParseStylesheet()` and check for errors |
+| `type_known` | WARNING | Check `n.Attrs["type"]` against known types from `Registry.KnownTypes()`; only active when `WithKnownTypes` option provided |
+| `fidelity_valid` | WARNING | Checks `fidelity` attr on nodes, edges, and graph via `fidelity.Mode(v).Valid()` |
 | `retry_target_exists` | WARNING | If node has `retry_target` or `fallback_retry_target`, check `g.NodeByID()` exists |
 
 Also fix `reachability` severity from WARNING to ERROR per spec. — **COMPLETED** (done in Phase 1)
-
-**Approach for `type_known`:** Add `KnownTypes() []string` method to Registry, pass registry ref to Runner via `NewRunner(opts...)`.
 
 ---
 
@@ -461,7 +466,7 @@ go test ./...
 ### Phase-specific testing:
 
 - **Phase 1:** ~~Add tests for retry backoff (verify delays), goal gate chain resolution, failure routing, truncation order fix.~~ DONE (30+ new tests, all passing, 77.5% coverage)
-- **Phase 2:** Add test cases for each new validation rule. Run `go test ./internal/attractor/validate/...`
+- **Phase 2:** ~~Add test cases for each new validation rule.~~ DONE (6 new test functions, 14 test cases, all passing). Also added `TestParseStylesheetErrors` in style package.
 - **Phase 3:** Add tests for fan-in ranking, parallel error_policy/max_parallel, manager loop cycles. Run `go test ./internal/attractor/handler/...`
 - **Phase 4:** Add tests for stylesheet application, status.json writing, artifact store CRUD, preamble generation. Run `go test ./internal/attractor/...`
 - **Phase 5:** Add tests for env context block, project doc discovery, subagent tools, follow-up queue. Run `go test ./internal/agent/...`

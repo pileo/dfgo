@@ -39,10 +39,26 @@ type Runner struct {
 	Rules []LintRule
 }
 
+// RunnerOption configures a validation Runner.
+type RunnerOption func(*runnerConfig)
+
+type runnerConfig struct {
+	knownTypes []string
+}
+
+// WithKnownTypes provides the set of known node type values for the type_known rule.
+func WithKnownTypes(types []string) RunnerOption {
+	return func(c *runnerConfig) { c.knownTypes = types }
+}
+
 // NewRunner creates a Runner with the default set of built-in rules.
-func NewRunner() *Runner {
+func NewRunner(opts ...RunnerOption) *Runner {
+	cfg := runnerConfig{}
+	for _, o := range opts {
+		o(&cfg)
+	}
 	return &Runner{
-		Rules: BuiltinRules(),
+		Rules: BuiltinRules(cfg),
 	}
 }
 

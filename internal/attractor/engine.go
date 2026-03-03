@@ -82,7 +82,11 @@ func (e *Engine) parse(dotSource string) (*model.Graph, error) {
 
 func (e *Engine) validate(g *model.Graph) error {
 	slog.Info("validating pipeline")
-	runner := validate.NewRunner()
+	var opts []validate.RunnerOption
+	if e.Registry != nil {
+		opts = append(opts, validate.WithKnownTypes(e.Registry.KnownTypes()))
+	}
+	runner := validate.NewRunner(opts...)
 	diags := runner.Run(g)
 
 	for _, d := range diags {

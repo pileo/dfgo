@@ -52,6 +52,24 @@ func (r *Registry) RegisterShape(shape string, h Handler) {
 	r.byShape[shape] = h
 }
 
+// KnownTypes returns all registered type attribute values.
+func (r *Registry) KnownTypes() []string {
+	types := make([]string, 0, len(r.byType))
+	for t := range r.byType {
+		types = append(types, t)
+	}
+	return types
+}
+
+// KnownShapes returns all registered shape attribute values.
+func (r *Registry) KnownShapes() []string {
+	shapes := make([]string, 0, len(r.byShape))
+	for s := range r.byShape {
+		shapes = append(shapes, s)
+	}
+	return shapes
+}
+
 // Lookup finds the handler for a node. Priority: type attr → shape attr.
 func (r *Registry) Lookup(n *model.Node) (Handler, error) {
 	if t := n.Attrs["type"]; t != "" {

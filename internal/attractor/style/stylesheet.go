@@ -3,6 +3,7 @@
 package style
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -69,22 +70,31 @@ func (s Selector) Matches(n *model.Node) bool {
 //	selector {
 //	    property: value;
 //	}
-func ParseStylesheet(src string) Stylesheet {
+//
+// Returns an error for structural issues like unclosed braces or empty selectors.
+func ParseStylesheet(src string) (Stylesheet, error) {
 	var ss Stylesheet
 	src = strings.TrimSpace(src)
 	for len(src) > 0 {
 		// Find selector
 		braceIdx := strings.Index(src, "{")
 		if braceIdx < 0 {
+			// Remaining non-whitespace text without an opening brace
+			if strings.TrimSpace(src) != "" {
+				return ss, fmt.Errorf("unexpected content without opening brace: %q", strings.TrimSpace(src))
+			}
 			break
 		}
 		selectorStr := strings.TrimSpace(src[:braceIdx])
+		if selectorStr == "" {
+			return ss, fmt.Errorf("empty selector before '{'")
+		}
 		src = src[braceIdx+1:]
 
 		// Find closing brace
 		closeIdx := strings.Index(src, "}")
 		if closeIdx < 0 {
-			break
+			return ss, fmt.Errorf("unclosed brace for selector %q", selectorStr)
 		}
 		body := src[:closeIdx]
 		src = strings.TrimSpace(src[closeIdx+1:])
@@ -95,7 +105,7 @@ func ParseStylesheet(src string) Stylesheet {
 			ss.Rules = append(ss.Rules, Rule{Selector: sel, Properties: props})
 		}
 	}
-	return ss
+	return ss, nil
 }
 
 func parseProperties(body string) map[string]string {

@@ -38,7 +38,10 @@ A bare identifier (no prefix) is treated as a shape class selector.
 `Stylesheet.Resolve(node)` returns the merged property map for a node. Rules are applied in specificity order (lowest first), so higher-specificity rules overwrite lower ones. Within the same specificity, later rules win.
 
 ```go
-ss := style.ParseStylesheet(src)
+ss, err := style.ParseStylesheet(src)
+if err != nil {
+    // structural error: unclosed brace, empty selector, etc.
+}
 props := ss.Resolve(node)
 // props["llm_model"] → "claude-3" (from .box, overrides * rule)
 // props["reasoning_effort"] → "high" (from #critical_step, overrides * rule)
@@ -46,4 +49,4 @@ props := ss.Resolve(node)
 
 ## Current Status
 
-The stylesheet parser and resolver are implemented and tested. They are **not yet wired into the engine** — the engine doesn't load or apply stylesheets during execution. This is a planned integration point where resolved properties would be passed to handlers (especially `CodergenHandler`) to configure LLM parameters per-node.
+The stylesheet parser and resolver are implemented and tested. `ParseStylesheet` returns an error for structural problems (unclosed braces, empty selectors), and the `stylesheet_syntax` validation rule checks this during pipeline validation. The stylesheet is **not yet applied during execution** — this is a planned integration point (Phase 4) where resolved properties would be passed to handlers to configure LLM parameters per-node.
