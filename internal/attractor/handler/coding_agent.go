@@ -9,6 +9,7 @@ import (
 	"dfgo/internal/agent/event"
 	"dfgo/internal/agent/execenv"
 	"dfgo/internal/agent/profile"
+	"dfgo/internal/attractor/cxdbstore"
 	"dfgo/internal/attractor/model"
 	"dfgo/internal/attractor/runtime"
 	"dfgo/internal/llm"
@@ -22,7 +23,13 @@ type AgentSessionFactory func(node *model.Node, pctx *runtime.Context, g *model.
 // The agent receives the node's prompt, runs an autonomous tool loop, and
 // returns the final text as a context update.
 type CodingAgentHandler struct {
-	factory AgentSessionFactory
+	factory  AgentSessionFactory
+	recorder *cxdbstore.Recorder
+}
+
+// SetRecorder sets the CXDB recorder for forwarding agent events.
+func (h *CodingAgentHandler) SetRecorder(r *cxdbstore.Recorder) {
+	h.recorder = r
 }
 
 // NewCodingAgentHandler creates a CodingAgentHandler with the given session factory.
@@ -86,6 +93,11 @@ func (h *CodingAgentHandler) Execute(ctx context.Context, node *model.Node, pctx
 			slog.Warn("coding_agent: llm error", "node", node.ID, "error", e.Data["error"])
 		case event.LoopDetected:
 			slog.Warn("coding_agent: loop detected", "node", node.ID, "tool", e.Data["tool"])
+		}
+
+		// Forward to CXDB recorder if available.
+		if h.recorder != nil {
+			h.recorder.OnAgentEvent(node.ID, e)
 		}
 	})
 

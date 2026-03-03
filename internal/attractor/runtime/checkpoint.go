@@ -16,6 +16,8 @@ type Checkpoint struct {
 	Context       map[string]string `json:"context"`
 	Logs          []string          `json:"logs,omitempty"`
 	VisitLog      []VisitEntry      `json:"visit_log"`
+	CXDBContextID uint64            `json:"cxdb_context_id,omitempty"`
+	CXDBHeadTurn  uint64            `json:"cxdb_head_turn,omitempty"`
 }
 
 // VisitEntry records a node visit.

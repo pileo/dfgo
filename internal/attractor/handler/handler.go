@@ -139,3 +139,4 @@ func WithInterviewer(iv interviewer.Interviewer) RegistryOption {
 func WithAgentSessionFactory(f AgentSessionFactory) RegistryOption {
 	return func(c *registryConfig) { c.agentSessionFactory = f }
 }
+

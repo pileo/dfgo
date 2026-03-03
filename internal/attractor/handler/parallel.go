@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 
+	"dfgo/internal/attractor/cxdbstore"
 	"dfgo/internal/attractor/model"
 	"dfgo/internal/attractor/runtime"
 )
@@ -35,6 +37,10 @@ type ParallelHandler struct {
 	// ChildExecutor is called to execute each child branch.
 	// It's set by the engine at runtime.
 	ChildExecutor func(ctx context.Context, nodeID string) (runtime.Outcome, error)
+
+	// Recorder is the CXDB recorder for forking branch contexts.
+	// May be nil if CXDB is disabled.
+	Recorder *cxdbstore.Recorder
 }
 
 // NewParallelHandler creates a ParallelHandler.
@@ -77,6 +83,15 @@ func (h *ParallelHandler) Execute(ctx context.Context, node *model.Node, pctx *r
 
 	// Semaphore to limit concurrency.
 	sem := make(chan struct{}, maxParallel)
+
+	// Fork CXDB context for each branch if recorder is available.
+	if h.Recorder != nil {
+		for _, childID := range children {
+			if _, err := h.Recorder.Fork(ctx); err != nil {
+				slog.Warn("cxdb fork failed for parallel branch", "branch", childID, "error", err)
+			}
+		}
+	}
 
 	var wg sync.WaitGroup
 	for i, childID := range children {

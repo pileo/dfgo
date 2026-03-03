@@ -41,6 +41,10 @@ type EngineConfig struct {
 	// Artifacts is an optional artifact store for the pipeline.
 	// If nil, one is created automatically using the run directory.
 	Artifacts *artifact.Store
+
+	// CXDBAddr is the CXDB binary protocol address (e.g., "localhost:9009").
+	// Empty string disables CXDB recording.
+	CXDBAddr string
 }
 
 // RunPipeline is a convenience function that creates an engine and runs a pipeline.

@@ -11,15 +11,16 @@ import (
 	"time"
 
 	"dfgo/internal/attractor/artifact"
+	"dfgo/internal/attractor/cxdbstore"
 	"dfgo/internal/attractor/dot"
 	"dfgo/internal/attractor/edge"
 	"dfgo/internal/attractor/events"
 	"dfgo/internal/attractor/fidelity"
-	"dfgo/internal/attractor/style"
 	"dfgo/internal/attractor/handler"
 	"dfgo/internal/attractor/model"
 	"dfgo/internal/attractor/rundir"
 	"dfgo/internal/attractor/runtime"
+	"dfgo/internal/attractor/style"
 	"dfgo/internal/attractor/transform"
 	"dfgo/internal/attractor/validate"
 
@@ -36,6 +37,7 @@ type Engine struct {
 	RunID     string
 	Artifacts *artifact.Store
 	Events    *events.Emitter
+	Recorder  *cxdbstore.Recorder
 
 	checkpoint      *runtime.Checkpoint
 	retryCounters   map[string]int
@@ -75,7 +77,7 @@ func (e *Engine) Run(ctx context.Context, dotSource string) error {
 	}
 
 	// Phase 3: Initialize
-	if err := e.initialize(g); err != nil {
+	if err := e.initialize(ctx, g); err != nil {
 		return fmt.Errorf("initialize: %w", err)
 	}
 
@@ -87,6 +89,9 @@ func (e *Engine) Run(ctx context.Context, dotSource string) error {
 				"error":  err.Error(),
 			})
 			e.Events.Close()
+		}
+		if e.Recorder != nil {
+			e.Recorder.Close()
 		}
 		return fmt.Errorf("execute: %w", err)
 	}
@@ -181,7 +186,7 @@ func (e *Engine) validate(g *model.Graph) error {
 	return nil
 }
 
-func (e *Engine) initialize(g *model.Graph) error {
+func (e *Engine) initialize(ctx context.Context, g *model.Graph) error {
 	// Generate run ID
 	if e.Config.ResumeRunID != "" {
 		e.RunID = e.Config.ResumeRunID
@@ -203,6 +208,21 @@ func (e *Engine) initialize(g *model.Graph) error {
 
 	// Initialize event emitter
 	e.Events = events.NewEmitter(256)
+
+	// Initialize CXDB recorder if configured
+	if e.Config.CXDBAddr != "" {
+		rec, err := cxdbstore.New(ctx, cxdbstore.Config{
+			Address:   e.Config.CXDBAddr,
+			ClientTag: "dfgo",
+			RunID:     e.RunID,
+			Pipeline:  g.Name,
+		})
+		if err != nil {
+			return fmt.Errorf("cxdb init: %w", err)
+		}
+		e.Recorder = rec
+		e.Events.On(rec.OnEvent)
+	}
 
 	// Initialize artifact store
 	if e.Config.Artifacts != nil {
@@ -476,6 +496,14 @@ func (e *Engine) executeNode(ctx context.Context, g *model.Graph, node *model.No
 			}
 			return e.executeNode(childCtx, g, childNode)
 		}
+		if e.Recorder != nil {
+			ph.Recorder = e.Recorder
+		}
+	}
+
+	// Wire CXDB recorder into coding agent handlers for agent event forwarding.
+	if ah, ok := h.(*handler.CodingAgentHandler); ok && e.Recorder != nil {
+		ah.SetRecorder(e.Recorder)
 	}
 
 	// Resolve fidelity and generate preamble
@@ -558,6 +586,10 @@ func (e *Engine) saveCheckpoint(currentNode string) {
 		Context:       e.PCtx.Snapshot(),
 		Logs:          e.PCtx.Logs(),
 		VisitLog:      e.visitLog,
+	}
+	if e.Recorder != nil {
+		cp.CXDBContextID = e.Recorder.ContextID()
+		cp.CXDBHeadTurn = e.Recorder.HeadTurn()
 	}
 	if err := cp.Save(e.RunDir.CheckpointPath()); err != nil {
 		slog.Error("failed to save checkpoint", "error", err)
@@ -648,6 +680,20 @@ func (e *Engine) finalize() error {
 		"pipeline": e.Graph.Name,
 	})
 	e.Events.Close()
+
+	// Write final.json with CXDB metadata
+	if e.Recorder != nil && e.RunDir != nil {
+		finalData := map[string]any{
+			"run_id":          e.RunID,
+			"status":          "completed",
+			"cxdb_context_id": e.Recorder.ContextID(),
+			"logs_root":       e.RunDir.Root,
+		}
+		if data, err := json.MarshalIndent(finalData, "", "  "); err == nil {
+			_ = os.WriteFile(filepath.Join(e.RunDir.Root, "final.json"), data, 0o644)
+		}
+		e.Recorder.Close()
+	}
 
 	// Update manifest
 	if e.RunDir != nil {

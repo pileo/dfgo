@@ -35,7 +35,7 @@ func rootCmd() *cobra.Command {
 }
 
 func runCmd() *cobra.Command {
-	var logsDir, resumeRunID string
+	var logsDir, resumeRunID, cxdbAddr string
 	var autoApprove, verbose bool
 
 	cmd := &cobra.Command{
@@ -63,11 +63,17 @@ func runCmd() *cobra.Command {
 				iv = interviewer.NewConsole()
 			}
 
+			// Resolve CXDB address: flag takes priority over env var.
+			if cxdbAddr == "" {
+				cxdbAddr = os.Getenv("DFGO_CXDB_ADDR")
+			}
+
 			cfg := attractor.EngineConfig{
 				LogsDir:     logsDir,
 				ResumeRunID: resumeRunID,
 				AutoApprove: autoApprove,
 				Interviewer: iv,
+				CXDBAddr:    cxdbAddr,
 			}
 
 			// Create LLM client from environment if any API keys are present.
@@ -88,6 +94,7 @@ func runCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&autoApprove, "auto-approve", false, "auto-approve all human prompts")
 	cmd.Flags().StringVar(&resumeRunID, "resume", "", "resume a previous run by ID")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "enable verbose logging")
+	cmd.Flags().StringVar(&cxdbAddr, "cxdb", "", "CXDB server address (e.g., localhost:9009)")
 
 	return cmd
 }

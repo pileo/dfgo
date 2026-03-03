@@ -683,7 +683,7 @@ func TestEventsEmitted(t *testing.T) {
 	if err := engine.validate(g); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.initialize(g); err != nil {
+	if err := engine.initialize(context.Background(), g); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1125,7 +1125,7 @@ func TestEventSequencing(t *testing.T) {
 	if err := engine.validate(g); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.initialize(g); err != nil {
+	if err := engine.initialize(context.Background(), g); err != nil {
 		t.Fatal(err)
 	}
 
