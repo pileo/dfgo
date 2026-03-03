@@ -159,32 +159,9 @@ func RegistryBundle() map[string]any {
 				"4": field("answer", "string"),
 				"5": tsField("timestamp"),
 			}),
-			TypeAgentTurnStart: typeDesc(1, map[string]any{
-				"1": field("node_id", "string"),
-				"2": field("round", "i32"),
-				"3": tsField("timestamp"),
-			}),
-			TypeAgentLLMResponse: typeDesc(1, map[string]any{
-				"1": field("node_id", "string"),
-				"2": field("model", "string"),
-				"3": field("finish_reason", "string"),
-				"4": field("input_tokens", "i32"),
-				"5": field("output_tokens", "i32"),
-				"6": tsField("timestamp"),
-			}),
-			TypeAgentToolExec: typeDesc(1, map[string]any{
-				"1": field("node_id", "string"),
-				"2": field("tool_name", "string"),
-				"3": field("call_id", "string"),
-				"4": field("is_error", "bool"),
-				"5": fieldSemantic("duration_ms", "u64", "duration_ms"),
-				"6": tsField("timestamp"),
-			}),
-			TypeAgentLoopDetected: typeDesc(1, map[string]any{
-				"1": field("node_id", "string"),
-				"2": field("tool_name", "string"),
-				"3": tsField("timestamp"),
-			}),
+			// Agent events use canonical cxdb.ConversationItem v3 types
+			// (AssistantTurn with ToolCalls/TurnMetrics, SystemMessage for
+			// turn boundaries and loop detection). No custom registry needed.
 		},
 	}
 }

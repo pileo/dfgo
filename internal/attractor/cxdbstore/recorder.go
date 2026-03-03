@@ -118,6 +118,24 @@ func (r *Recorder) OnEvent(evt events.Event) {
 	r.append(turn.typeID, turn.typeVersion, turn.payload)
 }
 
+// RecordInput records the prompt/input sent to an agent stage as a UserInput
+// ConversationItem. Call this before the agent session starts.
+func (r *Recorder) RecordInput(nodeID, text string) {
+	item := &cxdbtypes.ConversationItem{
+		ItemType:  cxdbtypes.ItemTypeUserInput,
+		Status:    cxdbtypes.ItemStatusComplete,
+		Timestamp: cxdbtypes.Now(),
+		UserInput: &cxdbtypes.UserInput{
+			Text: text,
+		},
+	}
+	r.append(
+		cxdbtypes.TypeIDConversationItem,
+		cxdbtypes.TypeVersionConversationItem,
+		mustEncode(item),
+	)
+}
+
 // OnAgentEvent records agent-level events within a stage.
 func (r *Recorder) OnAgentEvent(nodeID string, evt event.Event) {
 	turn, ok := agentEventToTurn(nodeID, evt)

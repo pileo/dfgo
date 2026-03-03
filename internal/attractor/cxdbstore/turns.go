@@ -1,12 +1,14 @@
 package cxdbstore
 
 import (
+	"fmt"
 	"log/slog"
 
 	"dfgo/internal/agent/event"
 	"dfgo/internal/attractor/events"
 
 	cxdb "github.com/strongdm/ai-cxdb/clients/go"
+	cxdbtypes "github.com/strongdm/ai-cxdb/clients/go/types"
 )
 
 // Turn type identifiers. Each maps to a CXDB type ID string.
@@ -25,10 +27,6 @@ const (
 	TypeInterviewCompleted = "com.dfgo.interview.completed"
 	TypeInterviewTimeout  = "com.dfgo.interview.timeout"
 	TypeCheckpointSaved   = "com.dfgo.checkpoint.saved"
-	TypeAgentTurnStart    = "com.dfgo.agent.turn.start"
-	TypeAgentLLMResponse  = "com.dfgo.agent.llm.response"
-	TypeAgentToolExec     = "com.dfgo.agent.tool.exec"
-	TypeAgentLoopDetected = "com.dfgo.agent.loop.detected"
 )
 
 // All turn structs use msgpack numeric tags.
@@ -120,35 +118,6 @@ type InterviewTurn struct {
 	Timestamp uint64 `msgpack:"5"`
 }
 
-type AgentTurnStartTurn struct {
-	NodeID    string `msgpack:"1"`
-	Round     int    `msgpack:"2"`
-	Timestamp uint64 `msgpack:"3"`
-}
-
-type AgentLLMResponseTurn struct {
-	NodeID       string `msgpack:"1"`
-	Model        string `msgpack:"2"`
-	FinishReason string `msgpack:"3"`
-	InputTokens  int    `msgpack:"4"`
-	OutputTokens int    `msgpack:"5"`
-	Timestamp    uint64 `msgpack:"6"`
-}
-
-type AgentToolExecTurn struct {
-	NodeID    string `msgpack:"1"`
-	ToolName  string `msgpack:"2"`
-	CallID    string `msgpack:"3"`
-	IsError   bool   `msgpack:"4"`
-	Duration  uint64 `msgpack:"5"` // ms
-	Timestamp uint64 `msgpack:"6"`
-}
-
-type AgentLoopDetectedTurn struct {
-	NodeID    string `msgpack:"1"`
-	ToolName  string `msgpack:"2"`
-	Timestamp uint64 `msgpack:"3"`
-}
 
 // turnData holds the encoded turn ready for appending to CXDB.
 type turnData struct {
@@ -269,43 +238,94 @@ func eventToTurn(evt events.Event) (turnData, bool) {
 	}
 }
 
-// agentEventToTurn maps an agent event to a typed CXDB turn.
+// agentEventToTurn maps an agent event to a cxdb.ConversationItem v3 turn.
+// Agent events are recorded as canonical ConversationItem types so the CXDB UI
+// can render them with rich tool call, metrics, and system message widgets.
 func agentEventToTurn(nodeID string, evt event.Event) (turnData, bool) {
-	ts := uint64(evt.Timestamp.UnixMilli())
+	ts := evt.Timestamp.UnixMilli()
 
 	switch evt.Type {
 	case event.TurnStart:
-		return encode(TypeAgentTurnStart, 1, AgentTurnStartTurn{
-			NodeID:    nodeID,
-			Round:     intVal(evt.Data, "round"),
+		round := intVal(evt.Data, "round")
+		return encodeConversationItem(&cxdbtypes.ConversationItem{
+			ItemType:  cxdbtypes.ItemTypeSystem,
+			Status:    cxdbtypes.ItemStatusComplete,
 			Timestamp: ts,
+			System: &cxdbtypes.SystemMessage{
+				Kind:    cxdbtypes.SystemKindInfo,
+				Title:   fmt.Sprintf("Agent turn %d", round),
+				Content: fmt.Sprintf("Stage %s starting round %d", nodeID, round),
+			},
 		})
+
 	case event.LLMResponse:
-		return encode(TypeAgentLLMResponse, 1, AgentLLMResponseTurn{
-			NodeID:       nodeID,
-			Model:        str(evt.Data, "model"),
-			FinishReason: str(evt.Data, "finish_reason"),
-			InputTokens:  intVal(evt.Data, "input_tokens"),
-			OutputTokens: intVal(evt.Data, "output_tokens"),
-			Timestamp:    ts,
+		inputTokens := int64(intVal(evt.Data, "input_tokens"))
+		outputTokens := int64(intVal(evt.Data, "output_tokens"))
+		return encodeConversationItem(&cxdbtypes.ConversationItem{
+			ItemType:  cxdbtypes.ItemTypeAssistantTurn,
+			Status:    cxdbtypes.ItemStatusComplete,
+			Timestamp: ts,
+			Turn: &cxdbtypes.AssistantTurn{
+				FinishReason: str(evt.Data, "finish_reason"),
+				Agent:        nodeID,
+				Metrics: &cxdbtypes.TurnMetrics{
+					InputTokens:  inputTokens,
+					OutputTokens: outputTokens,
+					TotalTokens:  inputTokens + outputTokens,
+				},
+			},
 		})
+
 	case event.ToolEnd:
-		return encode(TypeAgentToolExec, 1, AgentToolExecTurn{
-			NodeID:    nodeID,
-			ToolName:  str(evt.Data, "tool"),
-			CallID:    str(evt.Data, "call_id"),
-			IsError:   boolVal(evt.Data, "is_error"),
+		status := cxdbtypes.ToolCallStatusComplete
+		if boolVal(evt.Data, "is_error") {
+			status = cxdbtypes.ToolCallStatusError
+		}
+		return encodeConversationItem(&cxdbtypes.ConversationItem{
+			ItemType:  cxdbtypes.ItemTypeAssistantTurn,
+			Status:    cxdbtypes.ItemStatusComplete,
 			Timestamp: ts,
+			Turn: &cxdbtypes.AssistantTurn{
+				Agent: nodeID,
+				ToolCalls: []cxdbtypes.ToolCallItem{
+					{
+						Name:   str(evt.Data, "tool"),
+						Status: status,
+					},
+				},
+			},
 		})
+
 	case event.LoopDetected:
-		return encode(TypeAgentLoopDetected, 1, AgentLoopDetectedTurn{
-			NodeID:    nodeID,
-			ToolName:  str(evt.Data, "tool"),
+		toolName := str(evt.Data, "tool")
+		return encodeConversationItem(&cxdbtypes.ConversationItem{
+			ItemType:  cxdbtypes.ItemTypeSystem,
+			Status:    cxdbtypes.ItemStatusComplete,
 			Timestamp: ts,
+			System: &cxdbtypes.SystemMessage{
+				Kind:    cxdbtypes.SystemKindWarning,
+				Title:   "Loop detected",
+				Content: fmt.Sprintf("Repetitive tool call pattern detected for %s in stage %s", toolName, nodeID),
+			},
 		})
+
 	default:
 		return turnData{}, false
 	}
+}
+
+// encodeConversationItem encodes a ConversationItem as a CXDB turn.
+func encodeConversationItem(item *cxdbtypes.ConversationItem) (turnData, bool) {
+	payload, err := cxdb.EncodeMsgpack(item)
+	if err != nil {
+		slog.Error("cxdb encode conversation item failed", "error", err)
+		return turnData{}, false
+	}
+	return turnData{
+		typeID:      cxdbtypes.TypeIDConversationItem,
+		typeVersion: cxdbtypes.TypeVersionConversationItem,
+		payload:     payload,
+	}, true
 }
 
 func encode(typeID string, version uint32, v any) (turnData, bool) {

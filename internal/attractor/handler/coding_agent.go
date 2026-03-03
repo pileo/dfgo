@@ -101,6 +101,11 @@ func (h *CodingAgentHandler) Execute(ctx context.Context, node *model.Node, pctx
 		}
 	})
 
+	// Record the input prompt in CXDB before the agent starts.
+	if h.recorder != nil {
+		h.recorder.RecordInput(node.ID, prompt)
+	}
+
 	result := session.Run(ctx, prompt)
 
 	if result.Error != nil {

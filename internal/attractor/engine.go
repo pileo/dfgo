@@ -496,9 +496,6 @@ func (e *Engine) executeNode(ctx context.Context, g *model.Graph, node *model.No
 			}
 			return e.executeNode(childCtx, g, childNode)
 		}
-		if e.Recorder != nil {
-			ph.Recorder = e.Recorder
-		}
 	}
 
 	// Wire CXDB recorder into coding agent handlers for agent event forwarding.

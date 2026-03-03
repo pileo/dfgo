@@ -252,21 +252,20 @@ func TestOnEvent_UnknownEventIgnored(t *testing.T) {
 }
 
 func TestOnAgentEvent(t *testing.T) {
-	agentEvents := []struct {
-		evtType  event.Type
-		turnType string
-		data     map[string]any
-	}{
-		{event.TurnStart, TypeAgentTurnStart, map[string]any{"round": 1}},
-		{event.LLMResponse, TypeAgentLLMResponse, map[string]any{"model": "claude", "finish_reason": "stop", "input_tokens": 100, "output_tokens": 50}},
-		{event.ToolEnd, TypeAgentToolExec, map[string]any{"tool": "read", "call_id": "c1", "is_error": false}},
-		{event.LoopDetected, TypeAgentLoopDetected, map[string]any{"tool": "write"}},
-	}
-
 	mc := newMockClient()
 	rec, err := NewWithClient(context.Background(), mc, "run-1", "test")
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	agentEvents := []struct {
+		evtType event.Type
+		data    map[string]any
+	}{
+		{event.TurnStart, map[string]any{"round": 1}},
+		{event.LLMResponse, map[string]any{"finish_reason": "stop", "input_tokens": 100, "output_tokens": 50}},
+		{event.ToolEnd, map[string]any{"tool": "read", "is_error": false}},
+		{event.LoopDetected, map[string]any{"tool": "write"}},
 	}
 
 	for _, ae := range agentEvents {
@@ -282,10 +281,128 @@ func TestOnAgentEvent(t *testing.T) {
 		t.Fatalf("expected %d turns, got %d", len(agentEvents), len(turns))
 	}
 
-	for i, ae := range agentEvents {
-		if turns[i].typeID != ae.turnType {
-			t.Errorf("turn %d: expected type %q, got %q", i, ae.turnType, turns[i].typeID)
+	// All agent events should now be ConversationItem v3 types.
+	for i, turn := range turns {
+		if turn.typeID != cxdbtypes.TypeIDConversationItem {
+			t.Errorf("turn %d: expected type %q, got %q", i, cxdbtypes.TypeIDConversationItem, turn.typeID)
 		}
+		if turn.typeVersion != cxdbtypes.TypeVersionConversationItem {
+			t.Errorf("turn %d: expected version %d, got %d", i, cxdbtypes.TypeVersionConversationItem, turn.typeVersion)
+		}
+	}
+
+	// Decode and verify individual turns.
+	t.Run("TurnStart", func(t *testing.T) {
+		var item cxdbtypes.ConversationItem
+		if err := cxdb.DecodeMsgpackInto(turns[0].payload, &item); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if item.ItemType != cxdbtypes.ItemTypeSystem {
+			t.Errorf("expected system item, got %q", item.ItemType)
+		}
+		if item.System == nil || item.System.Kind != cxdbtypes.SystemKindInfo {
+			t.Error("expected system info message")
+		}
+		if item.System.Title != "Agent turn 1" {
+			t.Errorf("expected title 'Agent turn 1', got %q", item.System.Title)
+		}
+	})
+
+	t.Run("LLMResponse", func(t *testing.T) {
+		var item cxdbtypes.ConversationItem
+		if err := cxdb.DecodeMsgpackInto(turns[1].payload, &item); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if item.ItemType != cxdbtypes.ItemTypeAssistantTurn {
+			t.Errorf("expected assistant_turn, got %q", item.ItemType)
+		}
+		if item.Turn == nil {
+			t.Fatal("turn is nil")
+		}
+		if item.Turn.FinishReason != "stop" {
+			t.Errorf("expected finish_reason 'stop', got %q", item.Turn.FinishReason)
+		}
+		if item.Turn.Agent != "test_node" {
+			t.Errorf("expected agent 'test_node', got %q", item.Turn.Agent)
+		}
+		if item.Turn.Metrics == nil {
+			t.Fatal("metrics is nil")
+		}
+		if item.Turn.Metrics.InputTokens != 100 {
+			t.Errorf("expected input_tokens 100, got %d", item.Turn.Metrics.InputTokens)
+		}
+		if item.Turn.Metrics.OutputTokens != 50 {
+			t.Errorf("expected output_tokens 50, got %d", item.Turn.Metrics.OutputTokens)
+		}
+		if item.Turn.Metrics.TotalTokens != 150 {
+			t.Errorf("expected total_tokens 150, got %d", item.Turn.Metrics.TotalTokens)
+		}
+	})
+
+	t.Run("ToolEnd", func(t *testing.T) {
+		var item cxdbtypes.ConversationItem
+		if err := cxdb.DecodeMsgpackInto(turns[2].payload, &item); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if item.ItemType != cxdbtypes.ItemTypeAssistantTurn {
+			t.Errorf("expected assistant_turn, got %q", item.ItemType)
+		}
+		if item.Turn == nil {
+			t.Fatal("turn is nil")
+		}
+		if len(item.Turn.ToolCalls) != 1 {
+			t.Fatalf("expected 1 tool call, got %d", len(item.Turn.ToolCalls))
+		}
+		tc := item.Turn.ToolCalls[0]
+		if tc.Name != "read" {
+			t.Errorf("expected tool name 'read', got %q", tc.Name)
+		}
+		if tc.Status != cxdbtypes.ToolCallStatusComplete {
+			t.Errorf("expected status complete, got %q", tc.Status)
+		}
+	})
+
+	t.Run("LoopDetected", func(t *testing.T) {
+		var item cxdbtypes.ConversationItem
+		if err := cxdb.DecodeMsgpackInto(turns[3].payload, &item); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if item.ItemType != cxdbtypes.ItemTypeSystem {
+			t.Errorf("expected system item, got %q", item.ItemType)
+		}
+		if item.System == nil || item.System.Kind != cxdbtypes.SystemKindWarning {
+			t.Error("expected system warning message")
+		}
+	})
+}
+
+func TestOnAgentEvent_ToolError(t *testing.T) {
+	mc := newMockClient()
+	rec, err := NewWithClient(context.Background(), mc, "run-1", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec.OnAgentEvent("node", event.Event{
+		Type:      event.ToolEnd,
+		Timestamp: time.Now(),
+		Data:      map[string]any{"tool": "shell", "is_error": true},
+	})
+
+	turns := mc.getTurns()
+	if len(turns) != 1 {
+		t.Fatalf("expected 1 turn, got %d", len(turns))
+	}
+
+	var item cxdbtypes.ConversationItem
+	if err := cxdb.DecodeMsgpackInto(turns[0].payload, &item); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if item.Turn == nil || len(item.Turn.ToolCalls) != 1 {
+		t.Fatal("expected 1 tool call")
+	}
+	if item.Turn.ToolCalls[0].Status != cxdbtypes.ToolCallStatusError {
+		t.Errorf("expected status error, got %q", item.Turn.ToolCalls[0].Status)
 	}
 }
 
@@ -373,44 +490,72 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 		}
 	})
 
-	t.Run("AgentLLMResponse", func(t *testing.T) {
-		original := AgentLLMResponseTurn{NodeID: "n", Model: "claude", FinishReason: "stop", InputTokens: 100, OutputTokens: 50, Timestamp: 1700000000000}
+	t.Run("AgentLLMResponseConversationItem", func(t *testing.T) {
+		original := &cxdbtypes.ConversationItem{
+			ItemType:  cxdbtypes.ItemTypeAssistantTurn,
+			Status:    cxdbtypes.ItemStatusComplete,
+			Timestamp: 1700000000000,
+			Turn: &cxdbtypes.AssistantTurn{
+				FinishReason: "stop",
+				Agent:        "node1",
+				Metrics: &cxdbtypes.TurnMetrics{
+					InputTokens:  100,
+					OutputTokens: 50,
+					TotalTokens:  150,
+				},
+			},
+		}
 		encoded, err := cxdb.EncodeMsgpack(original)
 		if err != nil {
 			t.Fatalf("encode: %v", err)
 		}
-		var decoded AgentLLMResponseTurn
+		var decoded cxdbtypes.ConversationItem
 		if err := cxdb.DecodeMsgpackInto(encoded, &decoded); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if decoded != original {
-			t.Errorf("round-trip mismatch: got %+v, want %+v", decoded, original)
+		if decoded.Turn == nil || decoded.Turn.FinishReason != "stop" {
+			t.Errorf("round-trip mismatch: finish_reason = %q", decoded.Turn.FinishReason)
+		}
+		if decoded.Turn.Metrics == nil || decoded.Turn.Metrics.InputTokens != 100 {
+			t.Error("round-trip mismatch: metrics")
 		}
 	})
 
-	t.Run("AgentToolExec", func(t *testing.T) {
-		original := AgentToolExecTurn{NodeID: "n", ToolName: "read", CallID: "c1", IsError: true, Duration: 150, Timestamp: 1700000000000}
+	t.Run("AgentToolCallConversationItem", func(t *testing.T) {
+		original := &cxdbtypes.ConversationItem{
+			ItemType:  cxdbtypes.ItemTypeAssistantTurn,
+			Status:    cxdbtypes.ItemStatusComplete,
+			Timestamp: 1700000000000,
+			Turn: &cxdbtypes.AssistantTurn{
+				Agent: "node1",
+				ToolCalls: []cxdbtypes.ToolCallItem{
+					{Name: "read", Status: cxdbtypes.ToolCallStatusComplete},
+				},
+			},
+		}
 		encoded, err := cxdb.EncodeMsgpack(original)
 		if err != nil {
 			t.Fatalf("encode: %v", err)
 		}
-		var decoded AgentToolExecTurn
+		var decoded cxdbtypes.ConversationItem
 		if err := cxdb.DecodeMsgpackInto(encoded, &decoded); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if decoded != original {
-			t.Errorf("round-trip mismatch: got %+v, want %+v", decoded, original)
+		if decoded.Turn == nil || len(decoded.Turn.ToolCalls) != 1 {
+			t.Error("round-trip mismatch: tool calls")
+		}
+		if decoded.Turn.ToolCalls[0].Name != "read" {
+			t.Errorf("round-trip mismatch: tool name = %q", decoded.Turn.ToolCalls[0].Name)
 		}
 	})
 
-	// Verify all turn types at least encode successfully.
+	// Verify all pipeline turn types at least encode successfully.
 	allTurns := []any{
 		PipelineStartedTurn{}, PipelineCompletedTurn{}, PipelineFailedTurn{},
 		StageStartedTurn{}, StageCompletedTurn{}, StageFailedTurn{}, StageRetryingTurn{},
 		CheckpointSavedTurn{},
 		ParallelStartedTurn{}, ParallelBranchTurn{}, ParallelCompletedTurn{},
 		InterviewTurn{},
-		AgentTurnStartTurn{}, AgentLLMResponseTurn{}, AgentToolExecTurn{}, AgentLoopDetectedTurn{},
 	}
 	for _, turn := range allTurns {
 		encoded, err := cxdb.EncodeMsgpack(turn)
@@ -473,7 +618,7 @@ func TestRegistryBundle(t *testing.T) {
 		TypeCheckpointSaved,
 		TypeParallelStarted, TypeParallelBranch, TypeParallelCompleted,
 		TypeInterviewStarted, TypeInterviewCompleted, TypeInterviewTimeout,
-		TypeAgentTurnStart, TypeAgentLLMResponse, TypeAgentToolExec, TypeAgentLoopDetected,
+		// Agent events now use canonical cxdb.ConversationItem types — no custom registry entries.
 	}
 
 	for _, et := range expectedTypes {
