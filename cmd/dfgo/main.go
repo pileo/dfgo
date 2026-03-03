@@ -72,8 +72,8 @@ func runCmd() *cobra.Command {
 
 			// Create LLM client from environment if any API keys are present.
 			// This enables codergen and coding_agent pipeline nodes to call real LLMs.
-			if client, err := clientFromEnv(verbose); err == nil {
-				cfg.CodergenBackend = handler.NewLLMCodergenBackend(client, "")
+			if client, model, err := clientFromEnv(verbose); err == nil {
+				cfg.CodergenBackend = handler.NewLLMCodergenBackend(client, model)
 				workDir, _ := filepath.Abs(".")
 				env := execenv.NewLocal(workDir)
 				cfg.AgentSessionFactory = handler.DefaultAgentSessionFactory(client, env)
@@ -93,22 +93,35 @@ func runCmd() *cobra.Command {
 }
 
 // clientFromEnv creates an LLM client from available API key environment variables.
-// Returns an error if no API keys are found.
-func clientFromEnv(verbose bool) (*llm.Client, error) {
-	var opts []llm.ClientOption
+// Returns the client, the default model ID for the first available provider, and an error.
+func clientFromEnv(verbose bool) (*llm.Client, string, error) {
+	type providerEntry struct {
+		name    string
+		envKey  string
+		factory func() llm.ProviderAdapter
+	}
+	providers := []providerEntry{
+		{"anthropic", "ANTHROPIC_API_KEY", func() llm.ProviderAdapter { return provider.NewAnthropic() }},
+		{"openai", "OPENAI_API_KEY", func() llm.ProviderAdapter { return provider.NewOpenAI() }},
+		{"gemini", "GEMINI_API_KEY", func() llm.ProviderAdapter { return provider.NewGemini() }},
+	}
 
-	if os.Getenv("ANTHROPIC_API_KEY") != "" {
-		opts = append(opts, llm.WithProvider(provider.NewAnthropic()))
-	}
-	if os.Getenv("OPENAI_API_KEY") != "" {
-		opts = append(opts, llm.WithProvider(provider.NewOpenAI()))
-	}
-	if os.Getenv("GEMINI_API_KEY") != "" {
-		opts = append(opts, llm.WithProvider(provider.NewGemini()))
+	var opts []llm.ClientOption
+	var defaultModel string
+	for _, p := range providers {
+		if os.Getenv(p.envKey) == "" {
+			continue
+		}
+		opts = append(opts, llm.WithProvider(p.factory()))
+		if defaultModel == "" {
+			if m, ok := llm.GetLatestModel(p.name); ok {
+				defaultModel = m.ID
+			}
+		}
 	}
 
 	if len(opts) == 0 {
-		return nil, &llm.ConfigurationError{SDKError: llm.SDKError{
+		return nil, "", &llm.ConfigurationError{SDKError: llm.SDKError{
 			Message: "no LLM API keys found (set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY)",
 		}}
 	}
@@ -119,5 +132,5 @@ func clientFromEnv(verbose bool) (*llm.Client, error) {
 		opts = append(opts, llm.WithLogging(slog.Default()))
 	}
 
-	return llm.NewClient(opts...), nil
+	return llm.NewClient(opts...), defaultModel, nil
 }
