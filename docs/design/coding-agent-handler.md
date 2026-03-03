@@ -56,6 +56,15 @@ factory := handler.DefaultAgentSessionFactory(llmClient, execEnv)
 
 It passes the pipeline's `goal` context value as a user prompt to the agent session.
 
+## Event Logging
+
+The handler subscribes to agent session events via `session.OnEvent()`, logging them through `slog` for visibility when `--verbose` is enabled:
+
+- **Turn/response events** (`turn.start`, `llm.response`, `llm.stream.start`, `llm.chunk`, `llm.stream.end`, `tool.start`, `tool.end`) — logged at `Debug` level with node ID and relevant metadata (round number, token counts, tool names, finish reasons)
+- **Error/warning events** (`llm.error`, `loop.detected`) — logged at `Warn` level
+
+This gives full observability into the agent's execution within the pipeline without requiring a separate logging setup.
+
 ## Registration
 
 The handler is registered as `type="coding_agent"` in the default registry:

@@ -20,29 +20,31 @@ go build -o dfgo ./cmd/dfgo
 
 ```sh
 # Run a pipeline from a DOT file (auto-approve all human prompts)
-go run ./cmd/dfgo run testdata/pipelines/linear.dot -auto-approve
+go run ./cmd/dfgo run testdata/pipelines/linear.dot --auto-approve
 
 # Or use the compiled binary
-./dfgo run testdata/pipelines/linear.dot -auto-approve
+./dfgo run testdata/pipelines/linear.dot --auto-approve
 ```
 
 ### CLI flags
 
+Flags belong to the `run` subcommand and can appear in any position:
+
 | Flag | Default | Description |
 |---|---|---|
-| `-auto-approve` | `false` | Auto-approve all human interaction prompts |
-| `-logs-dir` | `runs` | Directory for run logs and checkpoints |
-| `-resume` | | Resume a previous run by its ID |
-| `-verbose` | `false` | Enable debug-level logging |
+| `--auto-approve` | `false` | Auto-approve all human interaction prompts |
+| `--logs-dir` | `runs` | Directory for run logs and checkpoints |
+| `--resume` | | Resume a previous run by its ID |
+| `--verbose` | `false` | Enable debug-level logging |
 
 ### Example pipelines
 
 ```sh
-go run ./cmd/dfgo run testdata/pipelines/simple.dot -auto-approve      # start → exit
-go run ./cmd/dfgo run testdata/pipelines/linear.dot -auto-approve      # start → A → B → exit
-go run ./cmd/dfgo run testdata/pipelines/branching.dot -auto-approve   # conditional routing
-go run ./cmd/dfgo run testdata/pipelines/parallel.dot -auto-approve    # fan-out/fan-in
-go run ./cmd/dfgo run testdata/pipelines/retry.dot -auto-approve       # goal gates + retries
+go run ./cmd/dfgo run testdata/pipelines/simple.dot --auto-approve      # start → exit
+go run ./cmd/dfgo run testdata/pipelines/linear.dot --auto-approve      # start → A → B → exit
+go run ./cmd/dfgo run testdata/pipelines/branching.dot --auto-approve   # conditional routing
+go run ./cmd/dfgo run testdata/pipelines/parallel.dot --auto-approve    # fan-out/fan-in
+go run ./cmd/dfgo run testdata/pipelines/retry.dot --auto-approve       # goal gates + retries
 ```
 
 ## Testing
@@ -93,7 +95,7 @@ go mod graph
 ## Project structure
 
 ```
-cmd/dfgo/                  CLI entry point
+cmd/dfgo/                  CLI entry point (cobra root + run subcommand)
 internal/attractor/
   attractor.go             RunPipeline facade + EngineConfig
   engine.go                5-phase lifecycle, execution loop, retry
@@ -115,6 +117,7 @@ internal/attractor/
     start.go               Start node (Mdiamond, no-op)
     exit.go                Exit node (Msquare, no-op)
     codergen.go            LLM code generation (CodergenBackend interface)
+    coding_agent.go        Autonomous agent session (with event logging)
     wait_human.go          Human approval (Interviewer interface)
     conditional.go         Diamond routing (pass-through)
     parallel.go            Fan-out with join policies
@@ -126,5 +129,16 @@ internal/attractor/
   fidelity/fidelity.go     LLM reasoning effort modes
   rundir/rundir.go         Run directory + manifest
   transform/transform.go   Variable expansion ($goal, ${var})
+internal/llm/              Unified LLM client (types, errors, middleware)
+  provider/                Provider adapters (Anthropic, OpenAI, Gemini)
+internal/agent/            Coding agent session + core loop
+  message/                 Agent-level message types
+  event/                   Async event emitter (14 typed events)
+  tool/                    Tool interface + 7 core tools (read/write/edit/patch/shell/grep/glob)
+    truncate/              Two-phase middle-cut output truncation
+  loop/                    Loop detection (SHA-256 signature hashing)
+  execenv/                 Execution environment (process group management)
+  profile/                 Provider profiles (Anthropic/OpenAI/Gemini tool sets)
+  prompt/                  5-layer system prompt builder
 testdata/pipelines/        DOT fixture files
 ```

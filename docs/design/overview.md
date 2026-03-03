@@ -54,7 +54,7 @@ Parse → Validate → Initialize → Execute → Finalize
 ## Package Dependency Graph
 
 ```
-cmd/dfgo
+cmd/dfgo (cobra root + run subcommand)
   ├─ attractor (engine, RunPipeline facade)
   │    ├─ dot (lexer, parser)
   │    ├─ model (Graph, Node, Edge)
@@ -90,6 +90,7 @@ All packages under `internal/` — not importable by external code.
 | Dependency | Used by | Purpose |
 |---|---|---|
 | `github.com/google/uuid` | engine | Generate unique run IDs |
+| `github.com/spf13/cobra` | CLI | Subcommand and flag parsing |
 | `golang.org/x/sync/errgroup` | (reserved) | Parallel handler goroutine management (not yet wired) |
 
 Everything else is Go stdlib: `log/slog`, `encoding/json`, `os/exec`, `sync`, `context`, `regexp`, `strconv`, `time`.
