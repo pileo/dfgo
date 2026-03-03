@@ -1,0 +1,6 @@
+digraph test {
+    start [shape=Mdiamond]
+    ask [type=coding_agent prompt="Say hello in one sentence." model="claude-sonnet-4-20250514" provider="anthropic" max_rounds="1"]
+    exit [shape=Msquare]
+    start -> ask -> exit
+}

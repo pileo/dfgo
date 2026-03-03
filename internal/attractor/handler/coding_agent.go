@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"dfgo/internal/agent"
+	"dfgo/internal/agent/event"
 	"dfgo/internal/agent/execenv"
 	"dfgo/internal/agent/profile"
 	"dfgo/internal/attractor/model"
@@ -51,6 +52,42 @@ func (h *CodingAgentHandler) Execute(ctx context.Context, node *model.Node, pctx
 			},
 		}, nil
 	}
+
+	// Subscribe to agent events for verbose logging.
+	session.OnEvent(func(e event.Event) {
+		switch e.Type {
+		case event.TurnStart:
+			slog.Debug("coding_agent: turn start", "node", node.ID, "round", e.Data["round"])
+		case event.LLMResponse:
+			slog.Debug("coding_agent: llm response",
+				"node", node.ID,
+				"finish_reason", e.Data["finish_reason"],
+				"input_tokens", e.Data["input_tokens"],
+				"output_tokens", e.Data["output_tokens"],
+			)
+		case event.LLMStreamStart:
+			slog.Debug("coding_agent: stream started", "node", node.ID, "model", e.Data["model"])
+		case event.LLMChunk:
+			if text, _ := e.Data["text"].(string); text != "" {
+				slog.Debug("coding_agent: chunk", "node", node.ID, "kind", e.Data["kind"], "text", text)
+			}
+		case event.LLMStreamEnd:
+			slog.Debug("coding_agent: stream ended",
+				"node", node.ID,
+				"finish_reason", e.Data["finish_reason"],
+				"input_tokens", e.Data["input_tokens"],
+				"output_tokens", e.Data["output_tokens"],
+			)
+		case event.ToolStart:
+			slog.Debug("coding_agent: tool call", "node", node.ID, "tool", e.Data["tool"])
+		case event.ToolEnd:
+			slog.Debug("coding_agent: tool done", "node", node.ID, "tool", e.Data["tool"], "is_error", e.Data["is_error"])
+		case event.LLMError:
+			slog.Warn("coding_agent: llm error", "node", node.ID, "error", e.Data["error"])
+		case event.LoopDetected:
+			slog.Warn("coding_agent: loop detected", "node", node.ID, "tool", e.Data["tool"])
+		}
+	})
 
 	result := session.Run(ctx, prompt)
 
