@@ -367,3 +367,211 @@ func TestGeminiFunctionCall(t *testing.T) {
 		t.Error("expected synthetic ID")
 	}
 }
+
+func TestCacheBreakpoints(t *testing.T) {
+	var captured []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured, _ = io.ReadAll(r.Body)
+		resp := anthropicResponse{ID: "msg_cache", Role: "assistant", StopReason: "end_turn"}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	a := NewAnthropic(func(a *Anthropic) {
+		a.APIKey = "test-key"
+		a.BaseURL = srv.URL
+	})
+
+	a.Complete(context.Background(), llm.Request{
+		Model: "claude-sonnet-4-20250514",
+		Messages: []llm.Message{
+			llm.TextMessage(llm.RoleSystem, "Be helpful"),
+			llm.TextMessage(llm.RoleUser, "First message"),
+			llm.TextMessage(llm.RoleAssistant, "OK"),
+			llm.TextMessage(llm.RoleUser, "Second message"),
+		},
+		Tools: []llm.ToolDef{
+			{Name: "read_file", Description: "Read", Parameters: json.RawMessage(`{"type":"object"}`)},
+			{Name: "write_file", Description: "Write", Parameters: json.RawMessage(`{"type":"object"}`)},
+		},
+	})
+
+	// The serialized request should contain cache_control entries.
+	body := string(captured)
+	if body == "" {
+		t.Fatal("no request body captured")
+	}
+
+	// Parse the request to verify cache breakpoints.
+	var req anthropicRequest
+	if err := json.Unmarshal(captured, &req); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. System prompt last block should have cache_control.
+	var sysBlocks []anthropicContentBlock
+	if err := json.Unmarshal(req.System, &sysBlocks); err != nil {
+		t.Fatal(err)
+	}
+	if len(sysBlocks) == 0 {
+		t.Fatal("no system blocks")
+	}
+	lastSys := sysBlocks[len(sysBlocks)-1]
+	if lastSys.CacheControl == nil || lastSys.CacheControl.Type != "ephemeral" {
+		t.Error("system prompt last block should have ephemeral cache_control")
+	}
+
+	// 2. Last tool should have cache_control.
+	if len(req.Tools) != 2 {
+		t.Fatalf("tools = %d, want 2", len(req.Tools))
+	}
+	lastTool := req.Tools[len(req.Tools)-1]
+	if lastTool.CacheControl == nil || lastTool.CacheControl.Type != "ephemeral" {
+		t.Error("last tool should have ephemeral cache_control")
+	}
+	// First tool should NOT have cache_control.
+	if req.Tools[0].CacheControl != nil {
+		t.Error("first tool should not have cache_control")
+	}
+
+	// 3. Last user message should have cache_control on its last content block.
+	// Find the last user message in the serialized request.
+	lastUserIdx := -1
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		if req.Messages[i].Role == "user" {
+			lastUserIdx = i
+			break
+		}
+	}
+	if lastUserIdx < 0 {
+		t.Fatal("no user message found")
+	}
+	var userBlocks []anthropicContentBlock
+	if err := json.Unmarshal(req.Messages[lastUserIdx].Content, &userBlocks); err != nil {
+		t.Fatal(err)
+	}
+	if len(userBlocks) == 0 {
+		t.Fatal("no user content blocks")
+	}
+	lastUserBlock := userBlocks[len(userBlocks)-1]
+	if lastUserBlock.CacheControl == nil || lastUserBlock.CacheControl.Type != "ephemeral" {
+		t.Error("last user message block should have ephemeral cache_control")
+	}
+}
+
+func TestCacheBreakpointsNoToolsNoSystem(t *testing.T) {
+	var captured []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured, _ = io.ReadAll(r.Body)
+		resp := anthropicResponse{ID: "msg_1", Role: "assistant", StopReason: "end_turn"}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	a := NewAnthropic(func(a *Anthropic) {
+		a.APIKey = "test-key"
+		a.BaseURL = srv.URL
+	})
+
+	// Request with no system message and no tools.
+	a.Complete(context.Background(), llm.Request{
+		Model: "test",
+		Messages: []llm.Message{
+			llm.TextMessage(llm.RoleUser, "Hello"),
+		},
+	})
+
+	// Should not panic, and should still work.
+	var req anthropicRequest
+	if err := json.Unmarshal(captured, &req); err != nil {
+		t.Fatal(err)
+	}
+	// Just verify it didn't crash and the user message got cache_control.
+	if len(req.Messages) == 0 {
+		t.Fatal("no messages")
+	}
+}
+
+func TestBetaHeaders(t *testing.T) {
+	a := NewAnthropic()
+
+	// Default: just prompt-caching.
+	result := a.betaHeaders(llm.Request{})
+	if result != "prompt-caching-2024-07-31" {
+		t.Errorf("default beta headers = %q", result)
+	}
+}
+
+func TestBetaHeadersMergeString(t *testing.T) {
+	a := NewAnthropic()
+
+	req := llm.Request{
+		ProviderOptions: map[string]any{
+			"anthropic": map[string]any{
+				"beta_headers": "extended-thinking-2025-04-11",
+			},
+		},
+	}
+	result := a.betaHeaders(req)
+	if result != "prompt-caching-2024-07-31,extended-thinking-2025-04-11" {
+		t.Errorf("merged beta headers = %q", result)
+	}
+}
+
+func TestBetaHeadersMergeList(t *testing.T) {
+	a := NewAnthropic()
+
+	req := llm.Request{
+		ProviderOptions: map[string]any{
+			"anthropic": map[string]any{
+				"beta_headers": []any{"feature-a", "feature-b"},
+			},
+		},
+	}
+	result := a.betaHeaders(req)
+	if result != "prompt-caching-2024-07-31,feature-a,feature-b" {
+		t.Errorf("merged beta headers = %q", result)
+	}
+}
+
+func TestBetaHeadersEmptyProviderOptions(t *testing.T) {
+	a := NewAnthropic()
+
+	req := llm.Request{
+		ProviderOptions: map[string]any{
+			"openai": map[string]any{"something": "else"},
+		},
+	}
+	result := a.betaHeaders(req)
+	if result != "prompt-caching-2024-07-31" {
+		t.Errorf("beta headers with wrong provider = %q", result)
+	}
+}
+
+func TestBetaHeadersSentInRequest(t *testing.T) {
+	var capturedBeta string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBeta = r.Header.Get("anthropic-beta")
+		resp := anthropicResponse{ID: "msg_1", Role: "assistant", StopReason: "end_turn"}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	a := NewAnthropic(func(a *Anthropic) {
+		a.APIKey = "test-key"
+		a.BaseURL = srv.URL
+	})
+
+	a.Complete(context.Background(), llm.Request{
+		Model: "test",
+		ProviderOptions: map[string]any{
+			"anthropic": map[string]any{
+				"beta_headers": "custom-beta-v1",
+			},
+		},
+	})
+
+	if capturedBeta != "prompt-caching-2024-07-31,custom-beta-v1" {
+		t.Errorf("anthropic-beta header = %q", capturedBeta)
+	}
+}

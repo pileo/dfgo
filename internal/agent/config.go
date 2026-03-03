@@ -41,6 +41,32 @@ type Config struct {
 
 	// Streaming enables streaming LLM responses (default: false).
 	Streaming bool
+
+	// ReasoningEffort controls reasoning depth ("low", "medium", "high").
+	// Empty string means provider default.
+	ReasoningEffort string
+
+	// EnableLoopDetection toggles the loop detector (default: true).
+	EnableLoopDetection *bool
+
+	// LoopDetectionWindow sets the sliding window size for loop detection (default: 10).
+	LoopDetectionWindow int
+}
+
+// loopWindow returns the configured loop detection window, defaulting to 10.
+func (c Config) loopWindow() int {
+	if c.LoopDetectionWindow > 0 {
+		return c.LoopDetectionWindow
+	}
+	return 10
+}
+
+// loopEnabled returns whether loop detection is enabled (default: true).
+func (c Config) loopEnabled() bool {
+	if c.EnableLoopDetection != nil {
+		return *c.EnableLoopDetection
+	}
+	return true
 }
 
 // DefaultConfig returns a Config with sensible defaults.

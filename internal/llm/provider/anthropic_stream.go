@@ -25,6 +25,7 @@ func (a *Anthropic) CompleteStream(ctx context.Context, req llm.Request) (*llm.S
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", a.APIKey)
 	httpReq.Header.Set("anthropic-version", anthropicAPIVersion)
+	httpReq.Header.Set("anthropic-beta", a.betaHeaders(req))
 
 	httpResp, err := a.Client.Do(httpReq)
 	if err != nil {

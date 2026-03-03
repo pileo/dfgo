@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -541,4 +542,162 @@ type customTestProvider struct {
 func (p *customTestProvider) Name() string { return "mock" }
 func (p *customTestProvider) Complete(ctx context.Context, req llm.Request) (*llm.Response, error) {
 	return p.fn(ctx, req)
+}
+
+func TestSessionFollowUp(t *testing.T) {
+	callCount := 0
+	prov := &customTestProvider{fn: func(ctx context.Context, req llm.Request) (*llm.Response, error) {
+		callCount++
+		switch callCount {
+		case 1:
+			// First call: answer the initial user message.
+			return &llm.Response{
+				Message:      llm.TextMessage(llm.RoleAssistant, "first answer"),
+				FinishReason: llm.FinishStop,
+				Usage:        llm.Usage{InputTokens: 10, OutputTokens: 5},
+			}, nil
+		case 2:
+			// Second call: answer the follow-up message.
+			// Verify the follow-up content is in the messages.
+			found := false
+			for _, m := range req.Messages {
+				if t := m.Text(); t == "follow up task" {
+					found = true
+				}
+			}
+			if !found {
+				return &llm.Response{
+					Message:      llm.TextMessage(llm.RoleAssistant, "no followup found"),
+					FinishReason: llm.FinishStop,
+				}, nil
+			}
+			return &llm.Response{
+				Message:      llm.TextMessage(llm.RoleAssistant, "follow-up done"),
+				FinishReason: llm.FinishStop,
+				Usage:        llm.Usage{InputTokens: 20, OutputTokens: 10},
+			}, nil
+		default:
+			return &llm.Response{
+				Message:      llm.TextMessage(llm.RoleAssistant, "unexpected call"),
+				FinishReason: llm.FinishStop,
+			}, nil
+		}
+	}}
+
+	client := llm.NewClient(llm.WithProvider(prov))
+	cfg := Config{
+		Client:  client,
+		Profile: profile.Anthropic{},
+		Env:     execenv.NewLocal(t.TempDir()),
+		Model:   "test-model",
+	}
+	session := NewSession(cfg)
+
+	// Queue a follow-up before running.
+	session.FollowUp("follow up task")
+
+	result := session.Run(context.Background(), "initial task")
+	if result.Error != nil {
+		t.Fatal(result.Error)
+	}
+	// The session should have processed both the initial message and the follow-up.
+	if callCount != 2 {
+		t.Errorf("LLM call count = %d, want 2", callCount)
+	}
+	if result.Rounds != 2 {
+		t.Errorf("rounds = %d, want 2", result.Rounds)
+	}
+	// The final text should be from the follow-up response.
+	if result.FinalText != "follow-up done" {
+		t.Errorf("final text = %q, want %q", result.FinalText, "follow-up done")
+	}
+	// Usage should be accumulated.
+	if result.TotalUsage.InputTokens != 30 {
+		t.Errorf("input tokens = %d, want 30", result.TotalUsage.InputTokens)
+	}
+}
+
+func TestSessionFollowUpMultiple(t *testing.T) {
+	callCount := 0
+	prov := &customTestProvider{fn: func(ctx context.Context, req llm.Request) (*llm.Response, error) {
+		callCount++
+		return &llm.Response{
+			Message:      llm.TextMessage(llm.RoleAssistant, fmt.Sprintf("response %d", callCount)),
+			FinishReason: llm.FinishStop,
+			Usage:        llm.Usage{InputTokens: 10, OutputTokens: 5},
+		}, nil
+	}}
+
+	client := llm.NewClient(llm.WithProvider(prov))
+	cfg := Config{
+		Client:  client,
+		Profile: profile.Anthropic{},
+		Env:     execenv.NewLocal(t.TempDir()),
+		Model:   "test-model",
+	}
+	session := NewSession(cfg)
+
+	// Queue multiple follow-ups.
+	session.FollowUp("followup 1")
+	session.FollowUp("followup 2")
+
+	result := session.Run(context.Background(), "start")
+	if result.Error != nil {
+		t.Fatal(result.Error)
+	}
+	// 1 initial + 2 follow-ups = 3 rounds.
+	if callCount != 3 {
+		t.Errorf("LLM call count = %d, want 3", callCount)
+	}
+	if result.Rounds != 3 {
+		t.Errorf("rounds = %d, want 3", result.Rounds)
+	}
+	if result.FinalText != "response 3" {
+		t.Errorf("final text = %q, want %q", result.FinalText, "response 3")
+	}
+}
+
+func TestSessionFollowUpEvents(t *testing.T) {
+	client := newTestClient(
+		&llm.Response{
+			Message:      llm.TextMessage(llm.RoleAssistant, "first"),
+			FinishReason: llm.FinishStop,
+		},
+		&llm.Response{
+			Message:      llm.TextMessage(llm.RoleAssistant, "second"),
+			FinishReason: llm.FinishStop,
+		},
+	)
+
+	cfg := Config{
+		Client:  client,
+		Profile: profile.Anthropic{},
+		Env:     execenv.NewLocal(t.TempDir()),
+		Model:   "test-model",
+	}
+	session := NewSession(cfg)
+	session.FollowUp("follow-up")
+
+	var mu sync.Mutex
+	followupExitSeen := false
+	session.OnEvent(func(e event.Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		if e.Type == event.TurnEnd {
+			if exit, ok := e.Data["exit"]; ok && exit == "followup" {
+				followupExitSeen = true
+			}
+		}
+	})
+
+	result := session.Run(context.Background(), "start")
+	if result.Error != nil {
+		t.Fatal(result.Error)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !followupExitSeen {
+		t.Error("expected turn.end event with exit=followup")
+	}
 }

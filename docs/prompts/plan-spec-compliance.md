@@ -255,80 +255,91 @@ Tests: 3 test functions in duration_test.go (ParseDuration with 10 subtests, Nod
 
 ---
 
-## Phase 5: Agent Improvements
+## Phase 5: Agent Improvements — COMPLETED
+
+All 6 items implemented and tested (27+ new test functions across 4 files, all passing).
 
 ### 5.1 Fix truncation order (already in Phase 1.6)
 
-### 5.2 Environment context block
+### 5.2 Environment context block — COMPLETED
 
-**File:** `internal/agent/prompt/builder.go` (Layer 2, lines 59-61)
+**File modified:** `internal/agent/prompt/builder.go`
 
-Replace the single-line `Working directory:` with the full spec format:
+Replaced the single-line `Working directory:` with a full `<environment>` XML block per spec:
+
 ```xml
 <environment>
-Working directory: {workDir}
-Is git repository: {isGit}
-Git branch: {branch}
-Platform: {platform}
-OS version: {osVersion}
-Today's date: {date}
-Model: {model}
+Working directory: /path/to/project
+Is git repository: true
+Git branch: main
+Platform: linux
+OS version: 6.18.13-arch1-1
+Today's date: 2026-03-03
+Model: claude-sonnet-4-20250514
 </environment>
 ```
 
-**Changes:**
-- Add `WithModel(model string)` and `WithPlatformInfo()` methods to Builder
-- `WithPlatformInfo()` calls `runtime.GOOS`, `exec.Command("uname -r")`, `exec.Command("git rev-parse --abbrev-ref HEAD")`, etc.
-- Update `session.go:buildRequest()` to call `pb.WithModel(s.cfg.Model).WithPlatformInfo()`
+Added `WithModel(model)` and `WithPlatformInfo()` builder methods. `buildEnvironment()` calls `git rev-parse` for repo/branch detection, `runtime.GOOS` for platform, `uname -r` for OS version. Wired into `session.go:buildRequest()` via `pb.WithModel(s.cfg.Model).WithPlatformInfo()`.
 
-### 5.3 Project document discovery
+Tests: 4 new test functions in builder_test.go (environment block, model, empty model, platform info).
 
-**New file:** `internal/agent/prompt/discovery.go`
+### 5.3 Project document discovery — COMPLETED
 
-Auto-discover project instruction files:
-```go
-func DiscoverProjectDocs(workDir string, providerName string) string
-```
+**File created:** `internal/agent/prompt/discovery.go`
 
-- Walk from git root to workDir
-- Look for: `AGENTS.md` (always), `CLAUDE.md` (anthropic), `GEMINI.md` (gemini), `.codex/instructions.md` (openai)
-- Concatenate (root first, deeper files appended)
-- Truncate at 32KB
-- Call from session.go if `cfg.ProjectDoc == ""`
+Implemented `DiscoverProjectDocs(workDir, providerName)` that auto-discovers project instruction files:
+- Walks from git root (via `git rev-parse --show-toplevel`) to workDir
+- Looks for `AGENTS.md` (always) + provider-specific files: `CLAUDE.md` (anthropic), `GEMINI.md` (gemini), `.codex/instructions.md` (openai)
+- Concatenates root-first, deeper files appended; truncates at 32KB
+- Helper: `pathChain(root, target)` returns directory chain from root to target (inclusive)
 
-### 5.4 Subagent tools
+Wired into `session.go:buildRequest()` — called when `cfg.ProjectDoc == ""`, so explicit docs take precedence over auto-discovery.
 
-**New file:** `internal/agent/tool/subagent_tools.go`
+Tests: 10 new test functions in discovery_test.go (pathChain variants, no files, with AGENTS.md, provider-specific, wrong provider, truncation, multiple files, empty file).
 
-Implement 4 tools that wrap `SubagentManager`:
-- `spawn_agent`: params `{task, working_dir?, model?, max_turns?}` → calls `mgr.Spawn()`
-- `send_input`: params `{agent_id, message}` → calls `mgr.SendInput()`
-- `wait`: params `{agent_id}` → calls `mgr.Wait()`
-- `close_agent`: params `{agent_id}` → calls `mgr.Close()`
+### 5.4 Subagent tools — COMPLETED
 
-Register in profile tool lists. Pass SubagentManager into Session and register tools in NewSession.
+**File created:** `internal/agent/tool/subagent.go`
 
-### 5.5 Follow-up queue
+Defined `SubagentSpawner` interface (in tool package to avoid circular deps) and `SubagentResult` struct. Implemented 4 tools:
 
-**File:** `internal/agent/session.go`
+| Tool | Params | Behavior |
+|------|--------|----------|
+| `spawn_agent` | `{task, agent_id}` | Spawns child agent via `mgr.Spawn()` |
+| `send_input` | `{agent_id, message}` | Injects steering message via `mgr.SendInput()` |
+| `wait` | `{agent_id}` | Blocks until child completes, returns formatted result |
+| `close_agent` | `{agent_id}` | Cancels and cleans up child agent |
 
-Add `followup []message.Message` field alongside `steering`. Add `FollowUp(content string)` method. After the main loop completes (natural exit), check followup queue and recursively process.
+**File modified:** `internal/agent/session.go`
 
-### 5.6 Missing Config options
+Added `RegisterSubagentTools(mgr)` method on Session with `subagentAdapter` that bridges `SubagentManager` → `SubagentSpawner`. Registers all 4 tools into the session's registry.
 
-**File:** `internal/agent/config.go`
+Tests: 17 new test functions in subagent_test.go (all tools with success/error/missing-args cases + tool metadata test).
 
-Add fields:
-- `Streaming bool` — use streaming LLM responses (**COMPLETED** as part of 6.2)
-- `ReasoningEffort string` — pass through to LLM request
-- `EnableLoopDetection bool` (default true) — toggle loop detector
-- `LoopDetectionWindow int` (default 10) — pass to NewDetector
+### 5.5 Follow-up queue — COMPLETED
 
-Wire through in session.go.
+**File modified:** `internal/agent/session.go`
+
+Added `followup []message.Message` field to Session. Added `FollowUp(content string)` method that queues a user message. At natural exit (no tool calls), the session now checks the followup queue: if non-empty, dequeues the next message, appends it to history, emits `turn.end` with `exit: "followup"`, and continues the loop instead of returning.
+
+Tests: 3 new test functions in session_test.go (single followup, multiple followups, followup events).
+
+### 5.6 Missing Config options — COMPLETED
+
+**File modified:** `internal/agent/config.go`
+
+Added 3 new fields to Config:
+- `ReasoningEffort string` — passed through to `llm.Request.ReasoningEffort` in `buildRequest()`
+- `EnableLoopDetection *bool` (default true via `loopEnabled()`) — gates the `detector.Record()` call in the tool execution loop
+- `LoopDetectionWindow int` (default 10 via `loopWindow()`) — passed to `loop.NewDetector()` in `NewSession()`
+
+`Streaming bool` was already added as part of Phase 6.2.
 
 ---
 
-## Phase 6: LLM Client Features
+## Phase 6: LLM Client Features — COMPLETED
+
+All 4 items implemented and tested (40+ new tests across provider and client packages, all passing).
 
 ### 6.1 `Client.FromEnv()` — COMPLETED
 
@@ -366,24 +377,28 @@ dfgo run pipeline.dot  (with ANTHROPIC_API_KEY set)
 - `internal/agent/event/event.go` — Added `llm.stream.start`, `llm.chunk`, `llm.stream.end` events
 - `internal/agent/session.go` — Added `streamTurn()` method, streaming branch in `Run()`
 
-**Tests:** 33 new tests across 7 files (SSE parser, stream type, all 3 providers, client routing, agent session streaming). All pass.
+Tests: 33 new tests across 7 files (SSE parser, stream type, all 3 providers, client routing, agent session streaming). All pass.
 
-### 6.3 Anthropic prompt caching
+### 6.3 Anthropic prompt caching — COMPLETED
 
-**File:** `internal/llm/provider/anthropic.go`
+**File modified:** `internal/llm/provider/anthropic.go`
 
-Auto-inject `cache_control` breakpoints on:
-1. System prompt (last text block)
-2. Tool definitions (last tool)
-3. Last user message in conversation prefix
+Added `injectCacheBreakpoints(ar)` method called at end of `buildRequest()`. Auto-injects `cache_control: {"type": "ephemeral"}` on three breakpoints:
+1. **System prompt** — last text block in the system array
+2. **Tool definitions** — last tool in the tools array
+3. **Last user message** — last content block of the last user-role message
 
-Add `anthropic-beta: prompt-caching-2024-07-31` header when cache_control is present.
+Added `CacheControl *anthropicCacheControl` field to both `anthropicContentBlock` and `anthropicTool` structs. Both `Complete()` and `CompleteStream()` now send the `anthropic-beta: prompt-caching-2024-07-31` header on every request.
 
-### 6.4 Beta headers support
+Tests: 2 new test functions in provider_test.go (cache breakpoint placement, no-panic on empty request).
 
-**File:** `internal/llm/provider/anthropic.go`
+### 6.4 Beta headers support — COMPLETED
 
-Read `req.ProviderOptions["anthropic"]["beta_headers"]` and join into `anthropic-beta` header value.
+**File modified:** `internal/llm/provider/anthropic.go`
+
+Added `betaHeaders(req)` method that always includes `prompt-caching-2024-07-31` and merges any user-specified headers from `req.ProviderOptions["anthropic"]["beta_headers"]` (supports both string and `[]any` formats). Both `Complete()` and `CompleteStream()` call `betaHeaders()` to set the `anthropic-beta` HTTP header.
+
+Tests: 5 new test functions in provider_test.go (default headers, merge string, merge list, empty options, end-to-end HTTP header verification).
 
 ---
 
@@ -427,8 +442,8 @@ go test ./...
 - **Phase 2:** ~~Add test cases for each new validation rule.~~ DONE (6 new test functions, 14 test cases, all passing). Also added `TestParseStylesheetErrors` in style package.
 - **Phase 3:** ~~Add tests for fan-in ranking, parallel error_policy/max_parallel, manager loop cycles.~~ DONE (18 new tests, all passing). Run `go test ./internal/attractor/handler/...`
 - **Phase 4:** ~~Add tests for stylesheet application, status.json writing, artifact store CRUD, preamble generation.~~ DONE (40+ new tests across 8 files, all passing). Run `go test ./internal/attractor/...`
-- **Phase 5:** Add tests for env context block, project doc discovery, subagent tools, follow-up queue. Run `go test ./internal/agent/...`
-- **Phase 6:** ~~Streaming tests~~ DONE (33 tests). Remaining: FromEnv, cache injection. Run `go test ./internal/llm/...`
+- **Phase 5:** ~~Add tests for env context block, project doc discovery, subagent tools, follow-up queue.~~ DONE (46+ new tests across 4 files, all passing). Run `go test ./internal/agent/...`
+- **Phase 6:** ~~Streaming tests~~ DONE (33 tests). ~~FromEnv, cache injection~~ DONE (7 new tests). Run `go test ./internal/llm/...`
 
 ### Integration test:
 Update `testdata/pipelines/retry.dot` to exercise the backoff + goal gate + retry_target chain. Add a new `testdata/pipelines/full_features.dot` that exercises stylesheet, fidelity, parallel with error_policy, and fan-in ranking.

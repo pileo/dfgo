@@ -59,6 +59,64 @@ func TestBuilderWithUserPrompt(t *testing.T) {
 	}
 }
 
+func TestBuilderEnvironmentBlock(t *testing.T) {
+	p := profile.Anthropic{}
+	r := tool.DefaultRegistry()
+	b := NewBuilder(p, r, "/tmp/work")
+
+	result := b.Build()
+
+	// The environment block should be wrapped in XML tags.
+	if !strings.Contains(result, "<environment>") {
+		t.Error("missing <environment> opening tag")
+	}
+	if !strings.Contains(result, "</environment>") {
+		t.Error("missing </environment> closing tag")
+	}
+	if !strings.Contains(result, "Working directory: /tmp/work") {
+		t.Error("missing working directory in environment block")
+	}
+	if !strings.Contains(result, "Today's date:") {
+		t.Error("missing today's date in environment block")
+	}
+	if !strings.Contains(result, "Is git repository:") {
+		t.Error("missing git repository status in environment block")
+	}
+}
+
+func TestBuilderWithModel(t *testing.T) {
+	p := profile.Anthropic{}
+	r := tool.DefaultRegistry()
+	b := NewBuilder(p, r, "/tmp/work").WithModel("test-model")
+
+	result := b.Build()
+	if !strings.Contains(result, "Model: test-model") {
+		t.Error("missing model in environment block")
+	}
+}
+
+func TestBuilderWithModelEmpty(t *testing.T) {
+	p := profile.Anthropic{}
+	r := tool.DefaultRegistry()
+	b := NewBuilder(p, r, "/tmp/work")
+
+	result := b.Build()
+	if strings.Contains(result, "Model:") {
+		t.Error("model should not appear when not set")
+	}
+}
+
+func TestBuilderWithPlatformInfo(t *testing.T) {
+	p := profile.Anthropic{}
+	r := tool.DefaultRegistry()
+	b := NewBuilder(p, r, "/tmp/work").WithPlatformInfo()
+
+	result := b.Build()
+	if !strings.Contains(result, "Platform:") {
+		t.Error("missing platform info")
+	}
+}
+
 func TestBuilderAllLayers(t *testing.T) {
 	p := profile.OpenAI{}
 	r := profile.ConfigureRegistry(p)

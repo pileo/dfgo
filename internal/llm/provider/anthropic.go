@@ -57,6 +57,7 @@ func (a *Anthropic) Complete(ctx context.Context, req llm.Request) (*llm.Respons
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", a.APIKey)
 	httpReq.Header.Set("anthropic-version", anthropicAPIVersion)
+	httpReq.Header.Set("anthropic-beta", a.betaHeaders(req))
 
 	httpResp, err := a.Client.Do(httpReq)
 	if err != nil {
@@ -95,23 +96,29 @@ type anthropicMessage struct {
 	Content json.RawMessage   `json:"content"`
 }
 
+type anthropicCacheControl struct {
+	Type string `json:"type"`
+}
+
 type anthropicContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	Content   json.RawMessage `json:"content,omitempty"`
-	IsError   bool            `json:"is_error,omitempty"`
-	Thinking  string          `json:"thinking,omitempty"`
-	Signature string          `json:"signature,omitempty"`
+	Type         string                 `json:"type"`
+	Text         string                 `json:"text,omitempty"`
+	ID           string                 `json:"id,omitempty"`
+	Name         string                 `json:"name,omitempty"`
+	Input        json.RawMessage        `json:"input,omitempty"`
+	ToolUseID    string                 `json:"tool_use_id,omitempty"`
+	Content      json.RawMessage        `json:"content,omitempty"`
+	IsError      bool                   `json:"is_error,omitempty"`
+	Thinking     string                 `json:"thinking,omitempty"`
+	Signature    string                 `json:"signature,omitempty"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 type anthropicTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description,omitempty"`
+	InputSchema  json.RawMessage        `json:"input_schema"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 type anthropicToolChoice struct {
@@ -200,6 +207,9 @@ func (a *Anthropic) buildRequest(req llm.Request) ([]byte, error) {
 		}
 		ar.ToolChoice = tc
 	}
+
+	// Auto-inject prompt caching breakpoints.
+	a.injectCacheBreakpoints(&ar)
 
 	return json.Marshal(ar)
 }
@@ -306,6 +316,69 @@ func (a *Anthropic) parseResponse(body []byte) (*llm.Response, error) {
 		},
 		Raw: body,
 	}, nil
+}
+
+// injectCacheBreakpoints marks the last system text block, last tool, and last
+// user message for Anthropic prompt caching. This reduces costs for repeated
+// tool-use conversations with stable system prompts and tool definitions.
+func (a *Anthropic) injectCacheBreakpoints(ar *anthropicRequest) {
+	ephemeral := &anthropicCacheControl{Type: "ephemeral"}
+
+	// 1. System prompt: mark last block.
+	if ar.System != nil {
+		var sysBlocks []anthropicContentBlock
+		if json.Unmarshal(ar.System, &sysBlocks) == nil && len(sysBlocks) > 0 {
+			sysBlocks[len(sysBlocks)-1].CacheControl = ephemeral
+			b, _ := json.Marshal(sysBlocks)
+			ar.System = b
+		}
+	}
+
+	// 2. Tools: mark last tool.
+	if len(ar.Tools) > 0 {
+		ar.Tools[len(ar.Tools)-1].CacheControl = ephemeral
+	}
+
+	// 3. Last user message: mark its last content block.
+	for i := len(ar.Messages) - 1; i >= 0; i-- {
+		if ar.Messages[i].Role == "user" {
+			var blocks []anthropicContentBlock
+			if json.Unmarshal(ar.Messages[i].Content, &blocks) == nil && len(blocks) > 0 {
+				blocks[len(blocks)-1].CacheControl = ephemeral
+				b, _ := json.Marshal(blocks)
+				ar.Messages[i].Content = b
+			}
+			break
+		}
+	}
+}
+
+// betaHeaders returns the value for the anthropic-beta header.
+// It combines prompt caching with any user-specified beta headers.
+func (a *Anthropic) betaHeaders(req llm.Request) string {
+	headers := []string{"prompt-caching-2024-07-31"}
+
+	// Merge user-provided beta headers from ProviderOptions.
+	if opts, ok := req.ProviderOptions["anthropic"]; ok {
+		if m, ok := opts.(map[string]any); ok {
+			if bh, ok := m["beta_headers"]; ok {
+				switch v := bh.(type) {
+				case string:
+					if v != "" {
+						headers = append(headers, v)
+					}
+				case []any:
+					for _, h := range v {
+						if s, ok := h.(string); ok && s != "" {
+							headers = append(headers, s)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return strings.Join(headers, ",")
 }
 
 func anthropicRole(r llm.Role) string {
