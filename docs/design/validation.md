@@ -40,9 +40,9 @@ Checks that exactly one node with `shape="Mdiamond"` exists. Zero or multiple st
 
 Checks that at least one node with `shape="Msquare"` exists. A pipeline with no exit is an error.
 
-### `reachability` (warning)
+### `reachability` (error)
 
-Walks the graph from the start node. Any node not reachable via outgoing edges is flagged. Unreachable nodes are usually mistakes (orphaned after refactoring).
+Walks the graph from the start node. Any node not reachable via outgoing edges is flagged as an error. Unreachable nodes are usually mistakes (orphaned after refactoring).
 
 ### `edge_target_exists` (error)
 

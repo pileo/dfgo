@@ -45,7 +45,7 @@ Fails on: missing start/exit nodes, dangling edge references, invalid condition 
 
 1. Generates a UUID run ID (or uses `ResumeRunID`)
 2. Creates the run directory (`{logsDir}/{runID}/` with `artifacts/` subdirectory)
-3. Seeds pipeline context from graph `goal` attribute and `InitialContext`
+3. Seeds pipeline context from graph `goal` attribute (also sets `graph.goal`) and `InitialContext`
 4. Writes initial `manifest.json`
 5. If resuming: loads checkpoint, restores context/retry counters/completed set
 
@@ -57,18 +57,33 @@ The main loop:
 currentNode = startNode (or checkpoint.CurrentNode if resuming)
 
 loop:
-    if currentNode is exit → break
+    if currentNode is exit:
+        check goal gates — if any unsatisfied, resolve retry_target and jump back
+        break
+
+    set context["current_node"] = currentNode
     handler = registry.Lookup(currentNode)
     outcome = handler.Execute(...)
     merge outcome.ContextUpdates into context
+    set context["outcome"] = outcome.Status
+    set context["preferred_label"] = outcome.PreferredLabel (if non-empty)
     record visit in log
 
-    if RETRY and retries remaining → increment counter, checkpoint, continue
-    if FAIL and goal_gate and retries remaining → increment counter, checkpoint, continue
+    if RETRY and retries remaining:
+        increment counter, set context["internal.retry_count.<id>"]
+        checkpoint, apply backoff delay (retry_policy), continue
+    if RETRY and retries exhausted:
+        if allow_partial → PARTIAL_SUCCESS
+        else → FAIL
+
+    if FAIL and goal_gate and retries remaining:
+        increment counter, checkpoint, apply backoff delay, continue
     if FAIL and goal_gate and no retries → return error (hard failure)
 
     mark node completed
     nextEdge = edge.Select(graph, currentNode, outcome, context)
+    if no matching edge and outcome is failure:
+        resolve retry_target chain → jump to target if found
     checkpoint(nextEdge.To)
     currentNode = nextEdge.To
 ```
@@ -77,12 +92,35 @@ loop:
 
 Two retry paths:
 
-1. **Explicit retry**: handler returns `RETRY` status. Engine retries up to `max_retries`.
-2. **Goal gate**: handler returns `FAIL` on a node with `goal_gate="true"`. Engine retries up to `max_retries`. If retries exhausted, the entire pipeline fails (goal gates are hard requirements).
+1. **Explicit retry**: handler returns `RETRY` status. Engine retries up to `max_retries` (default: graph `default_max_retry`, which defaults to 50). Each retry applies a backoff delay per the node's `retry_policy` (default: `"standard"` — exponential backoff with jitter).
+2. **Goal gate**: handler returns `FAIL` on a node with `goal_gate="true"`. Engine retries up to `max_retries` with backoff. If retries exhausted, the entire pipeline fails (goal gates are hard requirements).
+
+When retries are exhausted on an explicit retry:
+- If the node has `allow_partial="true"`, the status becomes `PARTIAL_SUCCESS` (treated as success for edge selection)
+- Otherwise, the status becomes `FAIL`
+
+### Goal Gate Enforcement at Exit
+
+When the engine reaches an exit node, it checks all `goal_gate="true"` nodes in the visit log. If any gate was never visited or has a non-success latest status, the engine:
+
+1. Looks up the gate node's retry counter vs `max_retries`
+2. If retries remain: resolves the retry target chain and redirects execution there
+3. If no retries remain: returns an error
+
+### Retry Target Chain
+
+When a node fails with no matching outgoing edge, or a goal gate is unsatisfied at exit, the engine resolves a retry target using this priority chain:
+
+1. Node `retry_target` attribute
+2. Node `fallback_retry_target` attribute
+3. Graph `retry_target` attribute
+4. Graph `fallback_retry_target` attribute
+
+Each candidate is validated against `g.NodeByID()` — only existing nodes are accepted.
 
 ### Cancellation
 
-The loop checks `ctx.Done()` on every iteration. A canceled context stops execution immediately.
+The loop checks `ctx.Done()` on every iteration and during backoff delays. A canceled context stops execution immediately.
 
 ## Phase 5: Finalize
 

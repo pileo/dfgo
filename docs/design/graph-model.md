@@ -19,6 +19,17 @@ type Graph struct {
 
 Constructed via `NewGraph(name)`. Nodes are stored both in a slice (preserving order) and an internal `map[string]*Node` for O(1) ID lookup.
 
+**Important graph-level attributes:**
+
+| Attribute | Purpose | Default |
+|---|---|---|
+| `goal` | Pipeline goal, seeded into context | — |
+| `fidelity` | Default fidelity mode | — |
+| `default_max_retry` | Default max retries for nodes without explicit `max_retries` | `50` |
+| `retry_target` | Graph-level fallback retry target node | — |
+| `fallback_retry_target` | Graph-level last-resort retry target | — |
+| `model_stylesheet` | CSS-like stylesheet for node attribute defaults | — |
+
 ### Node
 
 ```go
@@ -42,9 +53,14 @@ Nodes are identified by their DOT ID (e.g., `start`, `do_work`). All properties 
 | `goal_gate` | Whether failure should trigger retry | `"true"` |
 | `goal` | Human-readable goal for the node | `"Complete the task"` |
 | `join` | Join policy for parallel nodes | `"wait_all"`, `"first_success"`, `"k_of_n"`, `"quorum"` |
-| `command` | Shell command for tool nodes | `"go test ./..."` |
+| `tool_command` | Shell command for tool nodes (preferred) | `"go test ./..."` |
+| `command` | Shell command for tool nodes (legacy alias) | `"go test ./..."` |
 | `timeout` | Timeout in seconds for tool nodes | `"30"` |
 | `fidelity` | Fidelity mode override | `"full"`, `"compact"`, `"summary:high"` |
+| `allow_partial` | Accept partial success when retries exhausted | `"true"` |
+| `retry_policy` | Backoff preset name | `"standard"`, `"none"`, `"patient"` |
+| `retry_target` | Node to jump to on failure/retry | `"setup_step"` |
+| `fallback_retry_target` | Fallback retry target | `"init_step"` |
 
 ### Edge
 
@@ -68,13 +84,25 @@ type Edge struct {
 
 ## Typed Attribute Accessors
 
-Rather than storing typed fields, both `Node` and `Edge` provide accessor methods that parse strings on demand:
+Rather than storing typed fields, `Graph`, `Node`, and `Edge` all provide accessor methods that parse strings on demand:
 
 ```go
-node.IntAttr("max_retries", 0)    // returns int, or default if missing/unparseable
-node.BoolAttr("goal_gate", false) // returns bool
-node.StringAttr("prompt", "")     // returns string
-node.FloatAttr("weight", 1.0)     // returns float64
+// Graph-level
+g.IntAttr("default_max_retry", 50)  // returns int, or default if missing/unparseable
+g.BoolAttr("verbose", false)        // returns bool
+g.StringAttr("goal", "")            // returns string
+g.FloatAttr("threshold", 0.5)       // returns float64
+
+// Node-level
+node.IntAttr("max_retries", 0)
+node.BoolAttr("goal_gate", false)
+node.StringAttr("prompt", "")
+node.FloatAttr("weight", 1.0)
+
+// Edge-level
+edge.IntAttr("weight", 0)
+edge.FloatAttr("weight", 0.0)
+edge.StringAttr("label", "")
 ```
 
 This keeps the model aligned with DOT's string-native format. Invalid values silently fall back to the default — no parse errors at the model layer.

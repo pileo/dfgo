@@ -6,9 +6,9 @@ The dfgo project implements the Attractor pipeline orchestration engine specifie
 
 ---
 
-## Phase 1: Core Engine Corrections (Critical)
+## Phase 1: Core Engine Corrections (Critical) — COMPLETED
 
-These are correctness bugs — the engine behaves differently from the spec today.
+These are correctness bugs — the engine behaves differently from the spec today. All 7 items implemented and tested.
 
 ### 1.1 Retry backoff delay
 
@@ -124,7 +124,7 @@ Add 6 missing rules to `BuiltinRules()`:
 | `fidelity_valid` | WARNING | If node/edge/graph has `fidelity` attr, check `fidelity.Mode(v).Valid()` |
 | `retry_target_exists` | WARNING | If node has `retry_target` or `fallback_retry_target`, check `g.NodeByID()` exists |
 
-Also fix `reachability` severity from WARNING to ERROR per spec.
+Also fix `reachability` severity from WARNING to ERROR per spec. — **COMPLETED** (done in Phase 1)
 
 **Approach for `type_known`:** Add `KnownTypes() []string` method to Registry, pass registry ref to Runner via `NewRunner(opts...)`.
 
@@ -167,7 +167,9 @@ Expand from skeleton to spec algorithm:
   3. If "wait" in actions: `time.Sleep(pollInterval)` with ctx cancellation
 - Return SUCCESS on child completion, FAIL on max_cycles or child failure
 
-### 3.4 Tool handler — `tool_command` attr name
+### 3.4 Tool handler — `tool_command` attr name — COMPLETED
+
+> Implemented in Phase 1 as a bonus fix.
 
 **File:** `internal/attractor/handler/tool.go` (line 18)
 
@@ -458,7 +460,7 @@ go test ./...
 
 ### Phase-specific testing:
 
-- **Phase 1:** Add tests for retry backoff (verify delays), goal gate chain resolution, failure routing, truncation order fix. Run `go test ./internal/attractor/... ./internal/agent/tool/truncate/...`
+- **Phase 1:** ~~Add tests for retry backoff (verify delays), goal gate chain resolution, failure routing, truncation order fix.~~ DONE (30+ new tests, all passing, 77.5% coverage)
 - **Phase 2:** Add test cases for each new validation rule. Run `go test ./internal/attractor/validate/...`
 - **Phase 3:** Add tests for fan-in ranking, parallel error_policy/max_parallel, manager loop cycles. Run `go test ./internal/attractor/handler/...`
 - **Phase 4:** Add tests for stylesheet application, status.json writing, artifact store CRUD, preamble generation. Run `go test ./internal/attractor/...`

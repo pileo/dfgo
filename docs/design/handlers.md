@@ -132,9 +132,10 @@ The `opts` map includes the node ID, graph goal, and all non-reserved node attri
 
 - **Type**: `tool`
 - **Shape**: typically `parallelogram`
-- **Behavior**: Executes the node's `command` attribute as a shell command via `sh -c`. Captures stdout and stderr into context as `{node_id}.stdout` and `{node_id}.stderr`.
+- **Behavior**: Executes the node's shell command via `sh -c`. Captures stdout and stderr into context as `{node_id}.stdout` and `{node_id}.stderr`.
+- **Command attribute**: reads `tool_command` first, falls back to `command` for backward compatibility
 - **Timeout**: controlled by `timeout` attribute (default: 30 seconds)
-- **Failure**: `FailureTransient` on non-zero exit or timeout; `FailureDeterministic` if no `command` attribute
+- **Failure**: `FailureTransient` on non-zero exit or timeout; `FailureDeterministic` if no command attribute
 
 ### ManagerLoopHandler
 

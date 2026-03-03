@@ -9,7 +9,7 @@ After a node executes, the engine must choose which outgoing edge to follow. The
 ```
 Step 1: Condition match     ← edge has a condition and it evaluates true
 Step 2: Preferred label     ← edge label matches outcome.PreferredLabel
-Step 3: Suggested next ID   ← edge target matches outcome.SuggestedNextID
+Step 3: Suggested next IDs  ← edge target matches one of outcome.SuggestedNextIDs
 Step 4: Highest weight      ← among unconditional edges, pick highest weight
 Step 5: Declaration order   ← fallback: first edge as declared in DOT
 ```
@@ -37,9 +37,9 @@ review -> reject  [label="no"]
 // If handler returns PreferredLabel="no", the reject edge is taken
 ```
 
-### Step 3: Suggested Next ID
+### Step 3: Suggested Next IDs
 
-If the outcome includes a `SuggestedNextID`, the edge whose target node matches is selected. This allows handlers to directly request a specific destination.
+If the outcome includes `SuggestedNextIDs`, the list is iterated in priority order. For each ID, the first outgoing edge whose target matches is selected. This allows handlers to request specific destinations with fallback preferences.
 
 ### Step 4: Highest Weight (Unconditional)
 

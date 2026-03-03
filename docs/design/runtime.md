@@ -25,11 +25,25 @@ All methods are goroutine-safe. `Get` and `Snapshot` use read locks; `Set`, `Del
 ### How Context Flows
 
 1. Engine seeds context from graph-level `goal` attribute and `EngineConfig.InitialContext`
-2. After each handler executes, `Outcome.ContextUpdates` are merged into context
-3. Edge condition evaluation reads context via `context.*` keys
-4. Checkpoint saves a snapshot; resume restores it
+2. Engine sets built-in keys at various points (see below)
+3. After each handler executes, `Outcome.ContextUpdates` are merged into context
+4. Edge condition evaluation reads context via `context.*` keys
+5. Checkpoint saves a snapshot; resume restores it
 
 Convention: handlers store outputs under `{node_id}.response`, `{node_id}.stdout`, etc. to avoid collisions.
+
+### Built-in Context Keys
+
+The engine automatically sets these keys:
+
+| Key | When set | Value |
+|-----|----------|-------|
+| `goal` | Initialization | Graph-level `goal` attribute |
+| `graph.goal` | Initialization | Graph-level `goal` attribute (alias) |
+| `current_node` | Before each handler call | Current node ID |
+| `outcome` | After each handler call | Status string (e.g., `"SUCCESS"`, `"FAIL"`) |
+| `preferred_label` | After each handler call | Outcome's preferred label (if non-empty) |
+| `internal.retry_count.<nodeID>` | On retry | Retry count as string (e.g., `"1"`, `"2"`) |
 
 ## Outcome
 
@@ -37,13 +51,13 @@ The result of executing a single pipeline stage.
 
 ```go
 type Outcome struct {
-    Status          StageStatus        // SUCCESS, FAIL, RETRY, PARTIAL_SUCCESS
-    PreferredLabel  string             // hints edge selection toward a labeled edge
-    SuggestedNextID string             // hints edge selection toward a specific node
-    ContextUpdates  map[string]string  // key-value pairs to merge into pipeline context
-    FailureReason   string             // human-readable explanation of failure
-    FailureClass    FailureClass       // transient, deterministic, canceled, budget_exhausted
-    Notes           string             // handler-specific notes
+    Status           StageStatus        // SUCCESS, FAIL, RETRY, PARTIAL_SUCCESS
+    PreferredLabel   string             // hints edge selection toward a labeled edge
+    SuggestedNextIDs []string           // hints edge selection toward specific nodes (priority order)
+    ContextUpdates   map[string]string  // key-value pairs to merge into pipeline context
+    FailureReason    string             // human-readable explanation of failure
+    FailureClass     FailureClass       // transient, deterministic, canceled, budget_exhausted
+    Notes            string             // handler-specific notes
 }
 ```
 
@@ -104,3 +118,35 @@ The engine saves a checkpoint:
 - Before transitioning to the next node
 - Before retrying a node
 - At finalization (with `CurrentNode` set to empty)
+
+## Retry Policy
+
+Configures exponential backoff delay between retry attempts.
+
+```go
+type RetryPolicy struct {
+    InitialDelayMs int
+    BackoffFactor  float64
+    MaxDelayMs     int
+    Jitter         bool     // when true, delays are randomized to 50-100% of computed value
+}
+```
+
+`DelayForAttempt(n)` computes: `initial * factor^(n-1)`, capped at `MaxDelayMs`, with optional jitter.
+
+### Presets
+
+Select a preset via the `retry_policy` node attribute (default: `"standard"`):
+
+| Name | Initial | Factor | Max | Jitter | Use case |
+|------|---------|--------|-----|--------|----------|
+| `none` | 0ms | 1.0 | 0 | no | Tests, instant retry |
+| `standard` | 200ms | 2.0 | 60s | yes | Default for most nodes |
+| `aggressive` | 50ms | 1.5 | 5s | yes | Fast retry with cap |
+| `linear` | 1000ms | 1.0 | 1s | no | Fixed 1s delay |
+| `patient` | 1000ms | 3.0 | 120s | yes | Slow external services |
+
+```go
+policy := runtime.PolicyByName("standard")  // falls back to "standard" for unknown names
+delay := policy.DelayForAttempt(3)           // ~800ms ± jitter
+```

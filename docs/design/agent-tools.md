@@ -107,8 +107,10 @@ Finds files matching a glob pattern. Output truncated at 20K chars / 500 lines.
 
 Large tool outputs are truncated using a two-phase middle-cut strategy that preserves the beginning and end:
 
-1. **Line truncation**: if output exceeds `MaxLines`, keep `N/2` lines from head and tail, insert `... [X lines omitted] ...`
-2. **Character truncation**: if output exceeds `MaxChars`, keep `N/2` chars from head and tail, insert `... [X characters omitted] ...`
+1. **Character truncation**: if output exceeds `MaxChars`, keep `N/2` chars from head and tail, insert `... [X characters omitted] ...`
+2. **Line truncation**: if output exceeds `MaxLines`, keep `N/2` lines from head and tail, insert `... [X lines omitted] ...`
+
+Character truncation runs first so that reducing character count may bring line count under the limit, avoiding a redundant "lines omitted" marker.
 
 Per-tool limits:
 
