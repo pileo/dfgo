@@ -137,6 +137,54 @@ func (g *Graph) Predecessors(nodeID string) []string {
 	return ids
 }
 
+// IntAttr returns the integer value of the named graph attribute, or the default.
+func (g *Graph) IntAttr(key string, def int) int {
+	v, ok := g.Attrs[key]
+	if !ok {
+		return def
+	}
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return i
+}
+
+// BoolAttr returns the boolean value of the named graph attribute, or the default.
+func (g *Graph) BoolAttr(key string, def bool) bool {
+	v, ok := g.Attrs[key]
+	if !ok {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return b
+}
+
+// StringAttr returns the string value of the named graph attribute, or the default.
+func (g *Graph) StringAttr(key string, def string) string {
+	v, ok := g.Attrs[key]
+	if !ok {
+		return def
+	}
+	return v
+}
+
+// FloatAttr returns the float64 value of the named graph attribute, or the default.
+func (g *Graph) FloatAttr(key string, def float64) float64 {
+	v, ok := g.Attrs[key]
+	if !ok {
+		return def
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return def
+	}
+	return f
+}
+
 // IntAttr returns the integer value of the named attribute, or the default.
 func (n *Node) IntAttr(key string, def int) int {
 	v, ok := n.Attrs[key]

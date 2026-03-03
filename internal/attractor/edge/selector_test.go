@@ -51,9 +51,22 @@ func TestSelectSuggestedNextID(t *testing.T) {
 	g.AddEdge(&model.Edge{From: "A", To: "C", Attrs: map[string]string{}, Order: 1})
 
 	ctx := runtime.NewContext()
-	e := Select(g, "A", runtime.Outcome{Status: runtime.StatusSuccess, SuggestedNextID: "C"}, ctx)
+	e := Select(g, "A", runtime.Outcome{Status: runtime.StatusSuccess, SuggestedNextIDs: []string{"C"}}, ctx)
 	if e == nil || e.To != "C" {
 		t.Fatal("expected edge to C via suggested next ID")
+	}
+}
+
+func TestSelectSuggestedNextIDsPriority(t *testing.T) {
+	g := buildEdgeTestGraph()
+	g.AddEdge(&model.Edge{From: "A", To: "B", Attrs: map[string]string{}, Order: 0})
+	g.AddEdge(&model.Edge{From: "A", To: "C", Attrs: map[string]string{}, Order: 1})
+
+	ctx := runtime.NewContext()
+	// D has no edge from A, so it should skip to C
+	e := Select(g, "A", runtime.Outcome{Status: runtime.StatusSuccess, SuggestedNextIDs: []string{"D", "C"}}, ctx)
+	if e == nil || e.To != "C" {
+		t.Fatal("expected edge to C (first suggested with no edge is skipped)")
 	}
 }
 

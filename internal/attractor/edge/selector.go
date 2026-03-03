@@ -12,7 +12,7 @@ import (
 // Select picks the next edge from the outgoing edges of a node using a 5-step priority:
 //  1. Condition-matching edges (first match wins among those with conditions)
 //  2. Edge whose label matches outcome.PreferredLabel
-//  3. Edge whose target matches outcome.SuggestedNextID
+//  3. Edge whose target matches one of outcome.SuggestedNextIDs (first match wins)
 //  4. Highest-weight unconditional edge
 //  5. Lexical tiebreak (first by declaration order)
 //
@@ -53,10 +53,10 @@ func Select(g *model.Graph, nodeID string, outcome runtime.Outcome, ctx *runtime
 		}
 	}
 
-	// Step 3: suggested next ID
-	if outcome.SuggestedNextID != "" {
+	// Step 3: suggested next IDs (priority order)
+	for _, suggestedID := range outcome.SuggestedNextIDs {
 		for _, e := range edges {
-			if e.To == outcome.SuggestedNextID {
+			if e.To == suggestedID {
 				return e
 			}
 		}

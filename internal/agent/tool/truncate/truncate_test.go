@@ -84,6 +84,29 @@ func TestTruncateWithCustomLimits(t *testing.T) {
 	}
 }
 
+func TestTruncateCharBeforeLines(t *testing.T) {
+	// 100 lines of 50 chars each = 5099 total chars (with newlines).
+	// With MaxChars=2000 and MaxLines=80, char truncation fires first.
+	// After char truncation, the result is ~2000 chars + marker ≈ ~2040 chars.
+	// At 50 chars per line that's ~40 lines, which is under MaxLines=80,
+	// so no "lines omitted" marker should appear.
+	lines := make([]string, 100)
+	for i := range lines {
+		lines[i] = strings.Repeat("a", 50)
+	}
+	input := strings.Join(lines, "\n")
+	out, truncated := TruncateWithLimits(input, Limits{MaxChars: 2000, MaxLines: 80})
+	if !truncated {
+		t.Error("should truncate")
+	}
+	if !strings.Contains(out, "characters omitted") {
+		t.Error("should contain characters omitted marker")
+	}
+	if strings.Contains(out, "lines omitted") {
+		t.Error("char truncation should reduce content below line limit")
+	}
+}
+
 func TestTruncatePreservesHeadAndTail(t *testing.T) {
 	lines := make([]string, 20)
 	for i := range lines {

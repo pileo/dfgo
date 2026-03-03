@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"dfgo/internal/attractor/dot"
@@ -122,6 +123,7 @@ func (e *Engine) initialize(g *model.Graph) error {
 	e.PCtx = runtime.NewContext()
 	if goal := g.Attrs["goal"]; goal != "" {
 		e.PCtx.Set("goal", goal)
+		e.PCtx.Set("graph.goal", goal)
 	}
 	for k, v := range e.Config.InitialContext {
 		e.PCtx.Set(k, v)
@@ -186,6 +188,24 @@ func (e *Engine) execute(ctx context.Context, g *model.Graph) error {
 
 		// Check if this is an exit node
 		if node.Attrs["shape"] == "Msquare" {
+			// Check goal gates before accepting exit
+			if gateID := e.checkGoalGates(g); gateID != "" {
+				gateNode := g.NodeByID(gateID)
+				maxRetries := gateNode.IntAttr("max_retries", g.IntAttr("default_max_retry", 50))
+				if e.retryCounters[gateID] < maxRetries {
+					e.retryCounters[gateID]++
+					e.PCtx.Set("internal.retry_count."+gateID, strconv.Itoa(e.retryCounters[gateID]))
+					slog.Info("goal gate unsatisfied at exit, retrying", "gate", gateID, "attempt", e.retryCounters[gateID])
+					e.saveCheckpoint(gateID)
+					if target, ok := e.resolveRetryTarget(g, gateID); ok {
+						currentID = target
+						continue
+					}
+					currentID = gateID
+					continue
+				}
+				return fmt.Errorf("goal gate %q unsatisfied at exit after %d retries", gateID, maxRetries)
+			}
 			slog.Info("reached exit node", "node", currentID)
 			e.completed[currentID] = true
 			e.visitLog = append(e.visitLog, runtime.VisitEntry{
@@ -193,6 +213,9 @@ func (e *Engine) execute(ctx context.Context, g *model.Graph) error {
 			})
 			break
 		}
+
+		// Set current_node before execution
+		e.PCtx.Set("current_node", currentID)
 
 		// Execute the node
 		outcome, err := e.executeNode(ctx, g, node)
@@ -206,6 +229,10 @@ func (e *Engine) execute(ctx context.Context, g *model.Graph) error {
 		if outcome.ContextUpdates != nil {
 			e.PCtx.Merge(outcome.ContextUpdates)
 		}
+		e.PCtx.Set("outcome", string(outcome.Status))
+		if outcome.PreferredLabel != "" {
+			e.PCtx.Set("preferred_label", outcome.PreferredLabel)
+		}
 
 		// Record visit
 		attempt := e.retryCounters[currentID] + 1
@@ -215,25 +242,50 @@ func (e *Engine) execute(ctx context.Context, g *model.Graph) error {
 
 		// Handle retry
 		if outcome.Status == runtime.StatusRetry {
-			maxRetries := node.IntAttr("max_retries", 0)
+			maxRetries := node.IntAttr("max_retries", g.IntAttr("default_max_retry", 50))
 			if e.retryCounters[currentID] < maxRetries {
 				e.retryCounters[currentID]++
+				e.PCtx.Set("internal.retry_count."+currentID, strconv.Itoa(e.retryCounters[currentID]))
 				slog.Info("retrying node", "node", currentID, "attempt", e.retryCounters[currentID], "max", maxRetries)
 				e.saveCheckpoint(currentID)
+				policy := runtime.PolicyByName(node.StringAttr("retry_policy", "standard"))
+				delay := policy.DelayForAttempt(e.retryCounters[currentID])
+				if delay > 0 {
+					select {
+					case <-time.After(delay):
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
 				continue
 			}
 			slog.Warn("max retries exceeded", "node", currentID)
-			outcome.Status = runtime.StatusFail
-			outcome.FailureReason = "max retries exceeded"
+			if node.BoolAttr("allow_partial", false) {
+				outcome.Status = runtime.StatusPartialSuccess
+				outcome.Notes = "retries exhausted, partial accepted"
+			} else {
+				outcome.Status = runtime.StatusFail
+				outcome.FailureReason = "max retries exceeded"
+			}
 		}
 
 		// Handle failure with goal gate
 		if outcome.Status == runtime.StatusFail && node.BoolAttr("goal_gate", false) {
-			maxRetries := node.IntAttr("max_retries", 0)
+			maxRetries := node.IntAttr("max_retries", g.IntAttr("default_max_retry", 50))
 			if e.retryCounters[currentID] < maxRetries {
 				e.retryCounters[currentID]++
+				e.PCtx.Set("internal.retry_count."+currentID, strconv.Itoa(e.retryCounters[currentID]))
 				slog.Info("goal gate retry", "node", currentID, "attempt", e.retryCounters[currentID])
 				e.saveCheckpoint(currentID)
+				policy := runtime.PolicyByName(node.StringAttr("retry_policy", "standard"))
+				delay := policy.DelayForAttempt(e.retryCounters[currentID])
+				if delay > 0 {
+					select {
+					case <-time.After(delay):
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
 				continue
 			}
 			return fmt.Errorf("goal gate failed at node %q after %d retries: %s",
@@ -249,6 +301,14 @@ func (e *Engine) execute(ctx context.Context, g *model.Graph) error {
 			if len(g.OutEdges(currentID)) == 0 {
 				slog.Info("node has no outgoing edges, stopping", "node", currentID)
 				break
+			}
+			// Try retry_target chain as fallback for failed edge selection
+			if !outcome.IsSuccess() {
+				if target, ok := e.resolveRetryTarget(g, currentID); ok {
+					slog.Info("no matching edge, following retry_target", "from", currentID, "to", target)
+					currentID = target
+					continue
+				}
 			}
 			return fmt.Errorf("no matching edge from node %q", currentID)
 		}
@@ -280,6 +340,50 @@ func (e *Engine) executeNode(ctx context.Context, g *model.Graph, node *model.No
 	}
 
 	return h.Execute(ctx, node, e.PCtx, g, logsDir)
+}
+
+// checkGoalGates returns the ID of the first unsatisfied goal_gate node, or "".
+func (e *Engine) checkGoalGates(g *model.Graph) string {
+	// Build latest-status map from visitLog (last visit wins)
+	latestStatus := make(map[string]runtime.StageStatus)
+	for _, v := range e.visitLog {
+		latestStatus[v.NodeID] = v.Status
+	}
+	for _, n := range g.Nodes {
+		if !n.BoolAttr("goal_gate", false) {
+			continue
+		}
+		status, visited := latestStatus[n.ID]
+		if !visited {
+			return n.ID
+		}
+		if status != runtime.StatusSuccess && status != runtime.StatusPartialSuccess {
+			return n.ID
+		}
+	}
+	return ""
+}
+
+// resolveRetryTarget walks the retry target chain for a node.
+// Priority: node.retry_target → node.fallback_retry_target →
+// graph.retry_target → graph.fallback_retry_target.
+func (e *Engine) resolveRetryTarget(g *model.Graph, nodeID string) (string, bool) {
+	node := g.NodeByID(nodeID)
+	if node == nil {
+		return "", false
+	}
+	candidates := []string{
+		node.StringAttr("retry_target", ""),
+		node.StringAttr("fallback_retry_target", ""),
+		g.StringAttr("retry_target", ""),
+		g.StringAttr("fallback_retry_target", ""),
+	}
+	for _, c := range candidates {
+		if c != "" && g.NodeByID(c) != nil {
+			return c, true
+		}
+	}
+	return "", false
 }
 
 func (e *Engine) saveCheckpoint(currentNode string) {

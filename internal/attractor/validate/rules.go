@@ -80,7 +80,7 @@ func (r *reachabilityRule) Apply(g *model.Graph) []Diagnostic {
 		if !reachable[n.ID] {
 			diags = append(diags, Diagnostic{
 				Rule:     r.Name(),
-				Severity: SeverityWarning,
+				Severity: SeverityError,
 				NodeID:   n.ID,
 				Message:  fmt.Sprintf("node %q is not reachable from start", n.ID),
 			})

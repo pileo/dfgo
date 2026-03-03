@@ -26,7 +26,7 @@ const (
 type Outcome struct {
 	Status          StageStatus       `json:"status"`
 	PreferredLabel  string            `json:"preferred_label,omitempty"`
-	SuggestedNextID string            `json:"suggested_next_id,omitempty"`
+	SuggestedNextIDs []string          `json:"suggested_next_ids,omitempty"`
 	ContextUpdates  map[string]string `json:"context_updates,omitempty"`
 	FailureReason   string            `json:"failure_reason,omitempty"`
 	FailureClass    FailureClass      `json:"failure_class,omitempty"`

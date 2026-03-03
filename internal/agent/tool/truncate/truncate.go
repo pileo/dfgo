@@ -1,6 +1,6 @@
 // Package truncate provides output truncation for tool results.
-// Uses a two-phase middle-cut strategy: first enforce line limits,
-// then enforce character limits, cutting from the middle to preserve
+// Uses a two-phase middle-cut strategy: first enforce character limits,
+// then enforce line limits, cutting from the middle to preserve
 // the beginning and end of output.
 package truncate
 
@@ -42,7 +42,19 @@ func Truncate(toolName, output string) (string, bool) {
 func TruncateWithLimits(output string, limits Limits) (string, bool) {
 	truncated := false
 
-	// Phase 1: Line truncation (middle-cut).
+	// Phase 1: Character truncation (middle-cut).
+	if limits.MaxChars > 0 && len(output) > limits.MaxChars {
+		keep := limits.MaxChars
+		head := keep / 2
+		tail := keep - head
+		omitted := len(output) - keep
+		output = output[:head] +
+			fmt.Sprintf("\n... [%d characters omitted] ...\n", omitted) +
+			output[len(output)-tail:]
+		truncated = true
+	}
+
+	// Phase 2: Line truncation (middle-cut).
 	if limits.MaxLines > 0 {
 		lines := strings.Split(output, "\n")
 		if len(lines) > limits.MaxLines {
@@ -57,18 +69,6 @@ func TruncateWithLimits(output string, limits Limits) (string, bool) {
 			output = strings.Join(result, "\n")
 			truncated = true
 		}
-	}
-
-	// Phase 2: Character truncation (middle-cut).
-	if limits.MaxChars > 0 && len(output) > limits.MaxChars {
-		keep := limits.MaxChars
-		head := keep / 2
-		tail := keep - head
-		omitted := len(output) - keep
-		output = output[:head] +
-			fmt.Sprintf("\n... [%d characters omitted] ...\n", omitted) +
-			output[len(output)-tail:]
-		truncated = true
 	}
 
 	return output, truncated

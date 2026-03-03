@@ -153,3 +153,63 @@ func TestEdgeString(t *testing.T) {
 		t.Fatalf("unexpected: %s", e.String())
 	}
 }
+
+func TestGraphIntAttr(t *testing.T) {
+	g := NewGraph("test")
+	g.Attrs["default_max_retry"] = "50"
+	g.Attrs["bad"] = "xyz"
+
+	if g.IntAttr("default_max_retry", 0) != 50 {
+		t.Fatal("expected 50")
+	}
+	if g.IntAttr("missing", 10) != 10 {
+		t.Fatal("expected default 10")
+	}
+	if g.IntAttr("bad", 7) != 7 {
+		t.Fatal("expected default 7 for unparseable")
+	}
+}
+
+func TestGraphBoolAttr(t *testing.T) {
+	g := NewGraph("test")
+	g.Attrs["verbose"] = "true"
+	g.Attrs["bad"] = "xyz"
+
+	if !g.BoolAttr("verbose", false) {
+		t.Fatal("expected true")
+	}
+	if g.BoolAttr("missing", false) {
+		t.Fatal("expected default false")
+	}
+	if g.BoolAttr("bad", false) {
+		t.Fatal("expected default false for unparseable")
+	}
+}
+
+func TestGraphStringAttr(t *testing.T) {
+	g := NewGraph("test")
+	g.Attrs["goal"] = "build it"
+
+	if g.StringAttr("goal", "") != "build it" {
+		t.Fatal("expected 'build it'")
+	}
+	if g.StringAttr("missing", "default") != "default" {
+		t.Fatal("expected default")
+	}
+}
+
+func TestGraphFloatAttr(t *testing.T) {
+	g := NewGraph("test")
+	g.Attrs["threshold"] = "0.75"
+	g.Attrs["bad"] = "xyz"
+
+	if g.FloatAttr("threshold", 0) != 0.75 {
+		t.Fatal("expected 0.75")
+	}
+	if g.FloatAttr("missing", 1.5) != 1.5 {
+		t.Fatal("expected default 1.5")
+	}
+	if g.FloatAttr("bad", 2.0) != 2.0 {
+		t.Fatal("expected default 2.0 for unparseable")
+	}
+}

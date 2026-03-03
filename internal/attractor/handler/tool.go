@@ -15,7 +15,7 @@ import (
 type ToolHandler struct{}
 
 func (h *ToolHandler) Execute(ctx context.Context, node *model.Node, pctx *runtime.Context, g *model.Graph, logsDir string) (runtime.Outcome, error) {
-	cmdStr := node.StringAttr("command", "")
+	cmdStr := node.StringAttr("tool_command", node.StringAttr("command", ""))
 	if cmdStr == "" {
 		return runtime.FailOutcome("no command attribute on tool node", runtime.FailureDeterministic), nil
 	}
