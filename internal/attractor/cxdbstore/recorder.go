@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os/exec"
 	"strings"
 	"sync"
 
@@ -181,6 +182,8 @@ func (r *Recorder) appendProvenance(clientTag, runID, pipeline string) {
 		cxdbtypes.WithEnvVars(nil),
 	)
 	prov.CorrelationID = runID
+	prov.GitRepoName = gitRepoName()
+	prov.GitBranch = gitBranch()
 
 	item := &cxdbtypes.ConversationItem{
 		ItemType:  cxdbtypes.ItemTypeSystem,
@@ -208,6 +211,40 @@ func (r *Recorder) appendProvenance(clientTag, runID, pipeline string) {
 		cxdbtypes.TypeVersionConversationItem,
 		mustEncode(item),
 	)
+}
+
+// gitRepoName returns the git remote origin slug (e.g. "org/repo"), or empty.
+func gitRepoName() string {
+	out, err := exec.Command("git", "remote", "get-url", "origin").Output()
+	if err != nil {
+		return ""
+	}
+	return repoSlug(strings.TrimSpace(string(out)))
+}
+
+// gitBranch returns the current git branch name, or empty.
+func gitBranch() string {
+	out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// repoSlug extracts "org/repo" from a git remote URL.
+func repoSlug(remote string) string {
+	// SSH: git@github.com:org/repo.git
+	if i := strings.Index(remote, ":"); i != -1 && !strings.Contains(remote[:i], "/") {
+		remote = remote[i+1:]
+	} else if j := strings.Index(remote, "://"); j != -1 {
+		// HTTPS: https://github.com/org/repo.git
+		remote = remote[j+3:]
+		if k := strings.Index(remote, "/"); k != -1 {
+			remote = remote[k+1:]
+		}
+	}
+	remote = strings.TrimSuffix(remote, ".git")
+	return remote
 }
 
 func shortID(id string) string {
