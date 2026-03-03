@@ -104,6 +104,7 @@ func DefaultAgentSessionFactory(client *llm.Client, env execenv.Environment) Age
 			Env:       env,
 			Model:     modelName,
 			MaxRounds: maxRounds,
+			Streaming: node.BoolAttr("stream", false),
 		}
 
 		// Pass goal from pipeline context.
