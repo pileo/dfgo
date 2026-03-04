@@ -69,6 +69,23 @@ ans, err := cb.Ask(question)  // calls the function
 
 Composes naturally with `Recording` and other decorators.
 
+### HTTP
+
+Bridges blocking engine calls with async HTTP API requests. Used by the HTTP server for human gate interaction.
+
+```go
+h := interviewer.NewHTTP(ctx)
+
+// In the engine goroutine (blocks):
+ans, err := h.Ask(question)
+
+// From an HTTP handler (unblocks the engine):
+pending := h.Pending()                           // list pending questions
+err := h.SubmitAnswer(questionID, answer)         // answer a specific question
+```
+
+Each call to `Ask()` creates a `PendingQuestion` with a UUID and a `chan Answer` (capacity 1). The engine goroutine blocks until `SubmitAnswer()` sends an answer or the context is canceled. Canceling the context (e.g., pipeline cancellation) unblocks all waiting `Ask()` calls with `ctx.Err()`.
+
 ### Recording
 
 Wraps any other interviewer and records all question/answer pairs.

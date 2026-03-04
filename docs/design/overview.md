@@ -54,7 +54,10 @@ Parse → Validate → Initialize → Execute → Finalize
 ## Package Dependency Graph
 
 ```
-cmd/dfgo (cobra root + run subcommand)
+cmd/dfgo (cobra root + run/serve subcommands)
+  ├─ server (HTTP API server, stdlib net/http only)
+  │    ├─ runmgr (run lifecycle tracking)
+  │    └─ sse (fan-out broadcaster with replay)
   ├─ attractor (engine, RunPipeline facade)
   │    ├─ dot (lexer, parser)
   │    ├─ model (Graph, Node, Edge)
@@ -63,7 +66,7 @@ cmd/dfgo (cobra root + run subcommand)
   │    ├─ cond (condition parser/evaluator)
   │    ├─ edge (edge selector)
   │    ├─ handler (Handler interface, all handlers)
-  │    │    ├─ interviewer
+  │    │    ├─ interviewer (incl. HTTP interviewer for server)
   │    │    ├─ fidelity
   │    │    ├─ agent ←────────── coding_agent handler
   │    │    └─ llm ←──────────── LLMCodergenBackend
@@ -103,6 +106,8 @@ Tests use `go test ./...` across all packages. Key layers:
 
 - **Unit tests**: each package has its own `*_test.go` files testing handlers, validators, edge selection, fidelity, parsing, etc.
 - **Integration tests**: `internal/attractor/engine_test.go` tests feature composition through the full engine lifecycle using DOT fixtures from `testdata/pipelines/` and inline DOT graphs with custom handler stubs.
+- **Server integration tests**: `internal/server/server_test.go` tests the full HTTP API via `httptest.Server` — submit, status, SSE streaming, context, cancel, human gate question/answer flow.
 - **DOT fixtures**: `testdata/pipelines/` contains 8 valid and 3 invalid pipelines ranging from minimal (`simple.dot`) to comprehensive (`retry.dot` exercises retry/goal-gate/allow_partial composition; `full_features.dot` exercises stylesheet + fidelity + parallel + fan-in + review loops).
 
 See [engine.md](engine.md#test-pipelines) for the full fixture catalog and integration test matrix.
+See [http-server.md](http-server.md) for the HTTP API documentation.

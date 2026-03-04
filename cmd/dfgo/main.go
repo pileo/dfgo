@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"time"
 
 	"dfgo/internal/agent/execenv"
 	"dfgo/internal/attractor"
@@ -15,6 +16,8 @@ import (
 	"dfgo/internal/attractor/interviewer"
 	"dfgo/internal/llm"
 	"dfgo/internal/llm/provider"
+	"dfgo/internal/server"
+	"dfgo/internal/server/runmgr"
 
 	"github.com/spf13/cobra"
 )
@@ -31,6 +34,7 @@ func rootCmd() *cobra.Command {
 		Short: "Attractor pipeline orchestration engine",
 	}
 	root.AddCommand(runCmd())
+	root.AddCommand(serveCmd())
 	return root
 }
 
@@ -93,6 +97,67 @@ func runCmd() *cobra.Command {
 	cmd.Flags().StringVar(&logsDir, "logs-dir", "runs", "directory for run logs")
 	cmd.Flags().BoolVar(&autoApprove, "auto-approve", false, "auto-approve all human prompts")
 	cmd.Flags().StringVar(&resumeRunID, "resume", "", "resume a previous run by ID")
+	cmd.Flags().BoolVar(&verbose, "verbose", false, "enable verbose logging")
+	cmd.Flags().StringVar(&cxdbAddr, "cxdb", "", "CXDB server address (e.g., localhost:9009)")
+
+	return cmd
+}
+
+func serveCmd() *cobra.Command {
+	var addr, logsDir, cxdbAddr string
+	var verbose bool
+
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Start the HTTP API server",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if verbose {
+				slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			}
+
+			// Resolve CXDB address: flag takes priority over env var.
+			if cxdbAddr == "" {
+				cxdbAddr = os.Getenv("DFGO_CXDB_ADDR")
+			}
+
+			baseCfg := attractor.EngineConfig{
+				LogsDir:  logsDir,
+				CXDBAddr: cxdbAddr,
+			}
+
+			// Create LLM client from environment if any API keys are present.
+			if client, model, err := clientFromEnv(verbose); err == nil {
+				baseCfg.CodergenBackend = handler.NewLLMCodergenBackend(client, model)
+				workDir, _ := filepath.Abs(".")
+				env := execenv.NewLocal(workDir)
+				baseCfg.AgentSessionFactory = handler.DefaultAgentSessionFactory(client, env)
+				defer client.Close()
+			}
+
+			srv := server.New(server.Config{
+				Addr: addr,
+				ManagerCfg: runmgr.ManagerConfig{
+					BaseCfg: baseCfg,
+				},
+			})
+
+			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+			defer cancel()
+
+			// Graceful shutdown on signal.
+			go func() {
+				<-ctx.Done()
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer shutdownCancel()
+				srv.Shutdown(shutdownCtx)
+			}()
+
+			return srv.ListenAndServe()
+		},
+	}
+
+	cmd.Flags().StringVar(&addr, "addr", ":8080", "listen address")
+	cmd.Flags().StringVar(&logsDir, "logs-dir", "runs", "directory for run logs")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "enable verbose logging")
 	cmd.Flags().StringVar(&cxdbAddr, "cxdb", "", "CXDB server address (e.g., localhost:9009)")
 

@@ -31,6 +31,25 @@ err := attractor.RunPipeline(ctx, dotSource, attractor.EngineConfig{
 
 `RunPipeline` is a convenience wrapper that builds the registry from config and calls `Engine.Run()`.
 
+## Two-Phase API
+
+The engine exposes `Prepare()` and `Execute()` as separate public methods for callers that need to wire callbacks between initialization and execution:
+
+```go
+engine := attractor.NewEngine(cfg)
+
+// Phase 1-3: Parse → Validate → Initialize
+err := engine.Prepare(ctx, dotSource)
+
+// engine.Events is now available — register callbacks
+engine.Events.On(myCallback)
+
+// Phase 4-5: Execute → Finalize
+err = engine.Execute(ctx)
+```
+
+`Run()` calls `Prepare()` + `Execute()` for backward compatibility. The HTTP server uses the two-phase API to register the SSE broadcaster between initialization and execution.
+
 ## Phase 1: Parse
 
 Feeds DOT source to the hand-rolled parser. Produces an immutable `model.Graph`.

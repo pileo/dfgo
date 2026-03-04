@@ -57,8 +57,9 @@ func NewEngine(cfg EngineConfig) *Engine {
 	}
 }
 
-// Run executes the full 5-phase lifecycle: Parse → Validate → Initialize → Execute → Finalize.
-func (e *Engine) Run(ctx context.Context, dotSource string) error {
+// Prepare performs Parse → Stylesheet → Validate → Initialize.
+// After Prepare returns successfully, engine.Events is available for subscribing.
+func (e *Engine) Prepare(ctx context.Context, dotSource string) error {
 	// Phase 1: Parse
 	g, err := e.parse(dotSource)
 	if err != nil {
@@ -81,8 +82,17 @@ func (e *Engine) Run(ctx context.Context, dotSource string) error {
 		return fmt.Errorf("initialize: %w", err)
 	}
 
+	return nil
+}
+
+// Execute performs Execute → Finalize. Prepare must be called first.
+func (e *Engine) Execute(ctx context.Context) error {
+	if e.Graph == nil || e.Events == nil {
+		return fmt.Errorf("Prepare must be called before Execute")
+	}
+
 	// Phase 4: Execute
-	if err := e.execute(ctx, g); err != nil {
+	if err := e.execute(ctx, e.Graph); err != nil {
 		if e.Events != nil {
 			e.Events.Emit(events.PipelineFailed, map[string]any{
 				"run_id": e.RunID,
@@ -98,6 +108,14 @@ func (e *Engine) Run(ctx context.Context, dotSource string) error {
 
 	// Phase 5: Finalize
 	return e.finalize()
+}
+
+// Run executes the full 5-phase lifecycle: Parse → Validate → Initialize → Execute → Finalize.
+func (e *Engine) Run(ctx context.Context, dotSource string) error {
+	if err := e.Prepare(ctx, dotSource); err != nil {
+		return err
+	}
+	return e.Execute(ctx)
 }
 
 // nodeStatus is the JSON structure written to each node's status.json.
