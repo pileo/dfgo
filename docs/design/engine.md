@@ -117,6 +117,12 @@ loop:
     if FAIL and goal_gate and no retries → return error (hard failure)
 
     mark node completed
+
+    if parallel handler:
+        mark children completed, apply context updates, jump to convergence node
+    if manager loop handler:
+        mark children completed, jump to continuation node (first successor of any child)
+
     nextEdge = edge.Select(graph, currentNode, outcome, context)
     if no matching edge and outcome is failure:
         resolve retry_target chain → jump to target if found
@@ -234,5 +240,6 @@ The `engine_test.go` file contains integration tests that use both loaded fixtur
 | `TestParallelFanInContextKeys` | Fan-in writes `parallel.fan_in.best_id` / `best_outcome` to context |
 | `TestRetryDotFullChain` | Full `retry.dot`: goal gate retry, allow_partial, default_max_retry inheritance |
 | `TestFullFeaturesPipeline` | Full `full_features.dot`: stylesheet application + review loop with PreferredLabel |
+| `TestManagerLoopIntegration` | Manager loop executes worker 3 times via `ChildEngine`, observes `stack.child.status`, terminates, pipeline completes |
 
 Tests use custom handler stubs (`perNodeHandler`, `suggestedNextHandler`, `preferredLabelHandler`, etc.) registered via custom registries to isolate engine behavior from real LLM backends.

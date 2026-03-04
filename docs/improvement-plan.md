@@ -148,11 +148,12 @@ Features that 3-5 community implementations independently built, representing pr
 - Pairs well with simulation backend
 - Effort: Small
 
-#### 2.4 Manager Loop Handler (Full Implementation)
-- Wire up child engine integration (currently stub)
-- Poll/steer/wait cycle with configurable intervals
-- Stop condition evaluation
-- Child telemetry ingestion
+#### 2.4 Manager Loop Handler (Full Implementation) ✅
+- ~~Wire up child engine integration (currently stub)~~ Done: `ChildEngine` wired in `executeNode()`, children executed sequentially with context merging
+- ~~Poll/steer/wait cycle with configurable intervals~~ Done: observe/wait actions, `manager.poll_interval`
+- ~~Stop condition evaluation~~ Done: `manager.stop_condition` via `cond.Eval`
+- ~~Child telemetry ingestion~~ Done: `stack.child.status` observed each cycle
+- Integration test: `TestManagerLoopIntegration` + 8 unit tests
 - Effort: Medium-Large
 
 #### 2.5 Tool Call Hooks (Pre/Post)
