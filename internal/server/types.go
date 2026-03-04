@@ -1,12 +1,17 @@
 package server
 
-import "time"
+import (
+	"time"
+
+	"dfgo/internal/attractor/simulate"
+)
 
 // SubmitRequest is the JSON body for POST /api/v1/pipelines.
 type SubmitRequest struct {
 	DOTSource      string            `json:"dot_source"`
 	InitialContext map[string]string `json:"initial_context,omitempty"`
 	AutoApprove    bool              `json:"auto_approve,omitempty"`
+	Simulate       *simulate.Config  `json:"simulate,omitempty"`
 }
 
 // SubmitResponse is returned by POST /api/v1/pipelines.

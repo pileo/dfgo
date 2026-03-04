@@ -8,17 +8,20 @@ The engine orchestrates pipeline execution through a 5-phase lifecycle.
 
 ```go
 type EngineConfig struct {
-    Registry        *handler.Registry     // nil = use DefaultRegistry
-    LogsDir         string                // default: "runs"
-    ResumeRunID     string                // resume a previous run
-    InitialContext  map[string]string     // seed context
-    CodergenBackend handler.CodergenBackend
+    Registry            *handler.Registry         // nil = use DefaultRegistry
+    LogsDir             string                    // default: "runs"
+    ResumeRunID         string                    // resume a previous run
+    InitialContext      map[string]string         // seed context
+    CodergenBackend     handler.CodergenBackend
     AgentSessionFactory handler.AgentSessionFactory
-    Interviewer     interviewer.Interviewer
-    AutoApprove     bool                  // use AutoApprove interviewer
-    Artifacts       *artifact.Store       // nil = auto-created from run dir
+    Interviewer         interviewer.Interviewer
+    AutoApprove         bool                      // use AutoApprove interviewer
+    Artifacts           *artifact.Store           // nil = auto-created from run dir
+    CXDBAddr            string                    // CXDB binary protocol address
 }
 ```
+
+For simulation testing, set `Registry` to `simulate.BuildRegistry(cfg)` to bypass LLM calls entirely. See [simulation.md](simulation.md).
 
 ## Quick Start
 

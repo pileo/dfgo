@@ -11,6 +11,7 @@ import (
 	"dfgo/internal/attractor"
 	"dfgo/internal/attractor/handler"
 	"dfgo/internal/attractor/interviewer"
+	"dfgo/internal/attractor/simulate"
 	"dfgo/internal/server/sse"
 
 	"github.com/google/uuid"
@@ -85,6 +86,10 @@ func (r *Run) Snapshot() Run {
 type ManagerConfig struct {
 	// BaseCfg provides defaults for engine configuration.
 	BaseCfg attractor.EngineConfig
+
+	// Simulate, if non-nil, enables simulation mode for all runs.
+	// LLM-backed handlers are replaced with deterministic simulated responses.
+	Simulate *simulate.Config
 }
 
 // RunManager tracks concurrent pipeline runs.
@@ -107,6 +112,7 @@ type SubmitOptions struct {
 	DOTSource      string
 	InitialContext map[string]string
 	AutoApprove    bool
+	Simulate       *simulate.Config
 }
 
 // Submit starts a new pipeline run. Returns the run ID immediately.
@@ -133,18 +139,28 @@ func (m *RunManager) Submit(ctx context.Context, opts SubmitOptions) (string, er
 		cfg.Interviewer = httpIV
 	}
 
+	// Determine simulation config: per-request takes priority over server default.
+	simCfg := opts.Simulate
+	if simCfg == nil {
+		simCfg = m.cfg.Simulate
+	}
+
 	// Build handler registry.
-	var regOpts []handler.RegistryOption
-	if cfg.CodergenBackend != nil {
-		regOpts = append(regOpts, handler.WithCodergenBackend(cfg.CodergenBackend))
+	if simCfg != nil {
+		cfg.Registry = simulate.BuildRegistry(simCfg)
+	} else {
+		var regOpts []handler.RegistryOption
+		if cfg.CodergenBackend != nil {
+			regOpts = append(regOpts, handler.WithCodergenBackend(cfg.CodergenBackend))
+		}
+		if cfg.Interviewer != nil {
+			regOpts = append(regOpts, handler.WithInterviewer(cfg.Interviewer))
+		}
+		if cfg.AgentSessionFactory != nil {
+			regOpts = append(regOpts, handler.WithAgentSessionFactory(cfg.AgentSessionFactory))
+		}
+		cfg.Registry = handler.DefaultRegistry(regOpts...)
 	}
-	if cfg.Interviewer != nil {
-		regOpts = append(regOpts, handler.WithInterviewer(cfg.Interviewer))
-	}
-	if cfg.AgentSessionFactory != nil {
-		regOpts = append(regOpts, handler.WithAgentSessionFactory(cfg.AgentSessionFactory))
-	}
-	cfg.Registry = handler.DefaultRegistry(regOpts...)
 
 	engine := attractor.NewEngine(cfg)
 

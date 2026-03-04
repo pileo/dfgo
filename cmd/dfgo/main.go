@@ -14,6 +14,7 @@ import (
 	"dfgo/internal/attractor"
 	"dfgo/internal/attractor/handler"
 	"dfgo/internal/attractor/interviewer"
+	"dfgo/internal/attractor/simulate"
 	"dfgo/internal/llm"
 	"dfgo/internal/llm/provider"
 	"dfgo/internal/server"
@@ -39,7 +40,7 @@ func rootCmd() *cobra.Command {
 }
 
 func runCmd() *cobra.Command {
-	var logsDir, resumeRunID, cxdbAddr string
+	var logsDir, resumeRunID, cxdbAddr, simulatePath string
 	var autoApprove, verbose bool
 
 	cmd := &cobra.Command{
@@ -80,6 +81,18 @@ func runCmd() *cobra.Command {
 				CXDBAddr:    cxdbAddr,
 			}
 
+			// Simulation mode: bypass LLM entirely with deterministic responses.
+			if simulatePath != "" {
+				simCfg, err := simulate.LoadConfig(simulatePath)
+				if err != nil {
+					return fmt.Errorf("load simulation config: %w", err)
+				}
+				cfg.Registry = simulate.BuildRegistry(simCfg)
+				cfg.AutoApprove = true
+				cfg.Interviewer = &interviewer.AutoApprove{}
+				return attractor.RunPipeline(ctx, string(dotSource), cfg)
+			}
+
 			// Create LLM client from environment if any API keys are present.
 			// This enables codergen and coding_agent pipeline nodes to call real LLMs.
 			if client, model, err := clientFromEnv(verbose); err == nil {
@@ -99,12 +112,13 @@ func runCmd() *cobra.Command {
 	cmd.Flags().StringVar(&resumeRunID, "resume", "", "resume a previous run by ID")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "enable verbose logging")
 	cmd.Flags().StringVar(&cxdbAddr, "cxdb", "", "CXDB server address (e.g., localhost:9009)")
+	cmd.Flags().StringVar(&simulatePath, "simulate", "", "simulation config JSON file (bypasses LLM calls)")
 
 	return cmd
 }
 
 func serveCmd() *cobra.Command {
-	var addr, logsDir, cxdbAddr string
+	var addr, logsDir, cxdbAddr, simulatePath string
 	var verbose bool
 
 	cmd := &cobra.Command{
@@ -125,19 +139,31 @@ func serveCmd() *cobra.Command {
 				CXDBAddr: cxdbAddr,
 			}
 
+			var simCfg *simulate.Config
+			if simulatePath != "" {
+				var err error
+				simCfg, err = simulate.LoadConfig(simulatePath)
+				if err != nil {
+					return fmt.Errorf("load simulation config: %w", err)
+				}
+			}
+
 			// Create LLM client from environment if any API keys are present.
-			if client, model, err := clientFromEnv(verbose); err == nil {
-				baseCfg.CodergenBackend = handler.NewLLMCodergenBackend(client, model)
-				workDir, _ := filepath.Abs(".")
-				env := execenv.NewLocal(workDir)
-				baseCfg.AgentSessionFactory = handler.DefaultAgentSessionFactory(client, env)
-				defer client.Close()
+			if simCfg == nil {
+				if client, model, err := clientFromEnv(verbose); err == nil {
+					baseCfg.CodergenBackend = handler.NewLLMCodergenBackend(client, model)
+					workDir, _ := filepath.Abs(".")
+					env := execenv.NewLocal(workDir)
+					baseCfg.AgentSessionFactory = handler.DefaultAgentSessionFactory(client, env)
+					defer client.Close()
+				}
 			}
 
 			srv := server.New(server.Config{
 				Addr: addr,
 				ManagerCfg: runmgr.ManagerConfig{
-					BaseCfg: baseCfg,
+					BaseCfg:  baseCfg,
+					Simulate: simCfg,
 				},
 			})
 
@@ -160,6 +186,7 @@ func serveCmd() *cobra.Command {
 	cmd.Flags().StringVar(&logsDir, "logs-dir", "runs", "directory for run logs")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "enable verbose logging")
 	cmd.Flags().StringVar(&cxdbAddr, "cxdb", "", "CXDB server address (e.g., localhost:9009)")
+	cmd.Flags().StringVar(&simulatePath, "simulate", "", "simulation config JSON file (bypasses LLM calls)")
 
 	return cmd
 }

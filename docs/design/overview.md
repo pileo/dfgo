@@ -70,6 +70,7 @@ cmd/dfgo (cobra root + run/serve subcommands)
   │    │    ├─ fidelity
   │    │    ├─ agent ←────────── coding_agent handler
   │    │    └─ llm ←──────────── LLMCodergenBackend
+  │    ├─ simulate (simulation backend for testing without LLM)
   │    ├─ style (stylesheet with class support + Apply transform)
   │    ├─ events (pipeline observability events + emitter)
   │    ├─ artifact (artifact store: in-memory + file-backed)

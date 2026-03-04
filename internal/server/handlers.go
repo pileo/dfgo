@@ -29,6 +29,7 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		DOTSource:      req.DOTSource,
 		InitialContext: req.InitialContext,
 		AutoApprove:    req.AutoApprove,
+		Simulate:       req.Simulate,
 	})
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "pipeline submission failed", err.Error())

@@ -46,13 +46,18 @@ Request body:
 {
   "dot_source": "digraph { ... }",
   "initial_context": {"key": "value"},
-  "auto_approve": false
+  "auto_approve": false,
+  "simulate": {
+    "rules": [{"node_id": "A", "response": "done"}],
+    "fallback": "ok"
+  }
 }
 ```
 
 - `dot_source` (required): DOT graph source text.
 - `initial_context` (optional): Seed key-value pairs for the pipeline context.
 - `auto_approve` (optional): If true, all human gates are auto-approved.
+- `simulate` (optional): Simulation config — replaces LLM-backed handlers with deterministic responses. Per-request config takes priority over the server-level `--simulate` flag. See [simulation.md](simulation.md).
 
 Response (202 Accepted):
 
@@ -194,10 +199,11 @@ Each run gets a detached context (`context.Background()`) so that the HTTP reque
 dfgo serve [flags]
 
 Flags:
-  --addr string      listen address (default ":8080")
-  --logs-dir string  directory for run logs (default "runs")
-  --verbose          enable verbose (DEBUG) logging
-  --cxdb string      CXDB server address (e.g., localhost:9009)
+  --addr string       listen address (default ":8080")
+  --logs-dir string   directory for run logs (default "runs")
+  --verbose           enable verbose (DEBUG) logging
+  --cxdb string       CXDB server address (e.g., localhost:9009)
+  --simulate string   simulation config JSON file (bypasses LLM calls)
 ```
 
 The serve command sets up LLM clients from environment variables (same as `dfgo run`) and performs graceful shutdown on SIGINT: drains SSE connections, cancels running pipelines, waits for completion.

@@ -206,3 +206,15 @@ If no `parallel.results` key exists in context (e.g., node used as a plain synch
 - **Attributes**: `prompt` (required), `model`, `provider`, `max_rounds`
 - **Stub mode**: if no session factory is configured, returns a placeholder response
 - **See**: [coding-agent-handler.md](coding-agent-handler.md) for full details
+
+## Simulation
+
+The `simulate` package (`internal/attractor/simulate`) provides a `Handler` that replaces `codergen` and `coding_agent` types with deterministic, rule-based responses. This enables full pipeline testing without LLM API calls.
+
+```go
+reg := simulate.BuildRegistry(simConfig)
+```
+
+`BuildRegistry` starts from `DefaultRegistry` and overrides `codergen` and `coding_agent` with the simulation handler. All other handlers (start, exit, conditional, parallel, etc.) remain unchanged.
+
+See [simulation.md](simulation.md) for full details on config format and rule matching.
