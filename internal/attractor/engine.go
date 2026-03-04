@@ -472,6 +472,16 @@ func (e *Engine) execute(ctx context.Context, g *model.Graph) error {
 			}
 		}
 
+		// Manager loop: children already executed by handler, skip to continuation.
+		if node.Attrs["type"] == "stack.manager_loop" {
+			if nextID, ok := e.handleManagerLoopComplete(g, currentID); ok {
+				slog.Info("manager loop complete, continuing", "from", currentID, "to", nextID)
+				e.saveCheckpoint(nextID)
+				currentID = nextID
+				continue
+			}
+		}
+
 		// Select next edge
 		nextEdge := edge.Select(g, currentID, outcome, e.PCtx)
 		if nextEdge == nil {
@@ -513,6 +523,28 @@ func (e *Engine) executeNode(ctx context.Context, g *model.Graph, node *model.No
 				return runtime.Outcome{}, fmt.Errorf("parallel child %q not found", childNodeID)
 			}
 			return e.executeNode(childCtx, g, childNode)
+		}
+	}
+
+	// Wire ChildEngine for manager loop handlers so they execute children through the engine.
+	if mh, ok := h.(*handler.ManagerLoopHandler); ok {
+		mh.ChildEngine = func(childCtx context.Context, subgraphNodes []string) (runtime.Outcome, error) {
+			var lastOutcome runtime.Outcome
+			for _, childID := range subgraphNodes {
+				childNode := g.NodeByID(childID)
+				if childNode == nil {
+					return runtime.Outcome{}, fmt.Errorf("manager_loop child %q not found", childID)
+				}
+				outcome, err := e.executeNode(childCtx, g, childNode)
+				if err != nil {
+					return outcome, err
+				}
+				if outcome.ContextUpdates != nil {
+					e.PCtx.Merge(outcome.ContextUpdates)
+				}
+				lastOutcome = outcome
+			}
+			return lastOutcome, nil
 		}
 	}
 
@@ -650,6 +682,29 @@ func (e *Engine) handleParallelComplete(g *model.Graph, fanOutID string) (string
 	// Find convergence: common successor of all children.
 	children := g.Successors(fanOutID)
 	return findConvergence(g, children)
+}
+
+// handleManagerLoopComplete marks managed children as completed and returns
+// the continuation node. The continuation is the first successor of any
+// managed child — the node the pipeline should visit after the loop ends.
+func (e *Engine) handleManagerLoopComplete(g *model.Graph, managerID string) (string, bool) {
+	children := g.Successors(managerID)
+	if len(children) == 0 {
+		return "", false
+	}
+
+	// Mark children as completed (they were executed by the handler).
+	for _, c := range children {
+		e.completed[c] = true
+	}
+
+	// Find continuation: first successor of any child (by declaration order).
+	for _, c := range children {
+		for _, s := range g.Successors(c) {
+			return s, true
+		}
+	}
+	return "", false
 }
 
 // findConvergence returns the first node (by declaration order) that is a

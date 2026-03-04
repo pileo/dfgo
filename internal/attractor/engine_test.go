@@ -1459,3 +1459,47 @@ func TestFullFeaturesPipeline(t *testing.T) {
 		}
 	})
 }
+
+func TestManagerLoopIntegration(t *testing.T) {
+	src := `digraph test {
+		start [shape=Mdiamond]
+		manager [shape=house, type="stack.manager_loop",
+		         manager.max_cycles="10", manager.poll_interval="1ms"]
+		worker [shape=box, type="codergen", prompt="do work"]
+		exit [shape=Msquare]
+
+		start -> manager -> worker -> exit
+	}`
+
+	// Custom codergen handler: sets stack.child.status=SUCCESS on the 3rd call.
+	mockH := newPerNodeHandler(map[string]func(int) runtime.Outcome{
+		"worker": func(call int) runtime.Outcome {
+			if call == 3 {
+				return runtime.Outcome{
+					Status:         runtime.StatusSuccess,
+					ContextUpdates: map[string]string{"stack.child.status": "SUCCESS"},
+				}
+			}
+			return runtime.SuccessOutcome()
+		},
+	})
+
+	reg := handler.NewRegistry()
+	reg.RegisterShape("Mdiamond", &handler.StartHandler{})
+	reg.RegisterType("stack.manager_loop", &handler.ManagerLoopHandler{})
+	reg.RegisterType("codergen", mockH)
+	dir := t.TempDir()
+
+	err := RunPipeline(context.Background(), src, EngineConfig{
+		LogsDir:  dir,
+		Registry: reg,
+	})
+	if err != nil {
+		t.Fatalf("expected pipeline to complete, got: %v", err)
+	}
+
+	// Worker should be called exactly 3 times by the manager loop.
+	if got := mockH.callCount("worker"); got != 3 {
+		t.Errorf("expected worker called 3 times, got %d", got)
+	}
+}

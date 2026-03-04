@@ -180,7 +180,7 @@ If no `parallel.results` key exists in context (e.g., node used as a plain synch
 
 - **Type**: `stack.manager_loop`
 - **Shape**: `house`
-- **Behavior**: Manages iterative refinement by executing child nodes in a supervision loop until a stop condition is met or max cycles are exhausted. The `ChildEngine` callback is set by the engine to execute sub-pipelines. In stub mode (no engine), succeeds immediately.
+- **Behavior**: Manages iterative refinement by executing child nodes in a supervision loop until a stop condition is met or max cycles are exhausted. The `ChildEngine` callback is wired automatically by the engine (same pattern as `ParallelHandler.ChildExecutor`). In stub mode (no engine), succeeds immediately.
 
 **Attributes:**
 
